@@ -63,6 +63,7 @@ The same `AgentRelay.exe` serves GUI and CLI:
 
 ```text
 AgentRelay.exe doctor --json
+AgentRelay.exe quota --json
 AgentRelay.exe policy get
 AgentRelay.exe policy set medium
 AgentRelay.exe project add C:\work\project
@@ -96,8 +97,16 @@ The dashboard exposes `ready`, `running`, `waiting`, `stalled`,
 debounce/hash suppression, a per-project mutex, and process health supervise
 the runner; no model calls poll unchanged files. A crash or missing/invalid
 report is not completion. Quota exhaustion appears only when actual process
-exit/output matches a known exhaustion pattern; no unreliable percentage is
-shown.
+exit/output matches a known exhaustion pattern.
+
+The dashboard and `quota [--json]` command show the last observed percentage of
+general Antigravity prompt credits when a compatible local
+`Quota update received` log is available. The value includes its source,
+timestamp, and fresh/stale status. Agent Relay extracts only the numeric credit
+fields and timestamp; it does not read process tokens or call Antigravity's
+private localhost API. This percentage is not a model-specific guarantee for
+`gemini-3.6-flash-high`. Without a compatible source the value is explicitly
+`N/A`, never invented.
 
 A report must claim `PASS`, `FAIL`, `BLOCKED`, or `UNVERIFIED` and list changed
 files, commands and exit codes, first failure, unavailable dependencies, and
@@ -159,7 +168,9 @@ and project `.agent-relay` history are preserved by default under
 
 - Windows 10/11 x64 only.
 - One local executor and one active mission per project.
-- No auto-update, cloud sync, remote management, or quota percentage.
+- No auto-update, cloud sync, or remote management.
+- Quota percentage is last-observed general prompt-credit capacity, not a
+  model-specific reservation or dispatch guarantee.
 - Review hand-off is assisted: notification/copy prompt, not hidden Codex
   execution.
 - Repository transport history cleanup/retention is manual.

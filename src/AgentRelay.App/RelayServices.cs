@@ -15,7 +15,8 @@ public sealed class RelayServices
         RuntimeStore runtime,
         RuntimeRecoveryService recovery,
         DoctorService doctor,
-        CodexIntegrationService codex)
+        CodexIntegrationService codex,
+        AntigravityQuotaService quota)
     {
         Paths = paths;
         Files = files;
@@ -26,6 +27,7 @@ public sealed class RelayServices
         Recovery = recovery;
         Doctor = doctor;
         Codex = codex;
+        Quota = quota;
     }
 
     public AppPaths Paths { get; }
@@ -37,6 +39,7 @@ public sealed class RelayServices
     public RuntimeRecoveryService Recovery { get; }
     public DoctorService Doctor { get; }
     public CodexIntegrationService Codex { get; }
+    public AntigravityQuotaService Quota { get; }
 
     public static RelayServices Create()
     {
@@ -57,7 +60,8 @@ public sealed class RelayServices
                 paths,
                 files,
                 Path.Combine(AppContext.BaseDirectory, "Assets", "external-agent-delegation"),
-                clock));
+                clock),
+            AntigravityQuotaService.FromEnvironment(clock));
     }
 
     public AgyRunner CreateRunner(RunnerOptions? options = null)

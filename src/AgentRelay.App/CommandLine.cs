@@ -16,6 +16,7 @@ public static class CommandLine
         return command switch
         {
             "doctor" => await DoctorAsync(services, args, cancellationToken),
+            "quota" => await QuotaAsync(services, args, cancellationToken),
             "policy" => await PolicyAsync(services, args, cancellationToken),
             "project" => await ProjectAsync(services, args, cancellationToken),
             "handoff" => await HandoffAsync(services, args, cancellationToken),
@@ -23,6 +24,26 @@ public static class CommandLine
             "--help" or "-h" or "help" => Help(),
             _ => throw new ArgumentException($"Unknown command: {args[0]}")
         };
+    }
+
+    private static async Task<int> QuotaAsync(
+        RelayServices services,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await services.Quota.ReadAsync(cancellationToken);
+        if (args.Contains("--json", StringComparer.OrdinalIgnoreCase))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(snapshot, JsonSupport.Options));
+        }
+        else
+        {
+            Console.WriteLine(
+                snapshot.HasPercentage
+                    ? $"Prompt-credit quota: {snapshot.Detail} [{snapshot.Source}]"
+                    : $"Prompt-credit quota: N/A — {snapshot.Detail}");
+        }
+        return snapshot.HasPercentage ? 0 : 3;
     }
 
     private static async Task<int> DoctorAsync(
@@ -203,6 +224,7 @@ public static class CommandLine
         Console.WriteLine("""
             Agent Relay
               doctor [--json]
+              quota [--json]
               policy get [--project <path>]
               policy set off|low|medium|high
               project add|remove|trust <path-or-id>

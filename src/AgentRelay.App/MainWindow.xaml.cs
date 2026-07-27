@@ -18,6 +18,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly Forms.NotifyIcon _trayIcon;
     private ProjectRow? _selectedProject;
     private bool _explicitClose;
+    private DateTimeOffset _lastQuotaRefresh = DateTimeOffset.MinValue;
 
     public MainWindow(RelayServices services)
     {
@@ -42,12 +43,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _trayIcon.ContextMenuStrip = menu;
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _timer.Tick += async (_, _) => await RefreshProjectsAsync();
+        _timer.Tick += async (_, _) =>
+        {
+            await RefreshProjectsAsync();
+            if (DateTimeOffset.UtcNow - _lastQuotaRefresh >= TimeSpan.FromSeconds(30))
+            {
+                await RefreshQuotaAsync();
+            }
+        };
         Loaded += async (_, _) =>
         {
             await RunDoctorAsync();
             await LoadPolicyAsync();
             await RefreshProjectsAsync();
+            await RefreshQuotaAsync();
             _timer.Start();
         };
         StateChanged += (_, _) =>
@@ -74,7 +83,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    private async void Doctor_Click(object sender, RoutedEventArgs e) => await RunDoctorAsync();
+    private async void Doctor_Click(object sender, RoutedEventArgs e)
+    {
+        await RunDoctorAsync();
+        await RefreshQuotaAsync();
+    }
 
     private async void RepairCodex_Click(object sender, RoutedEventArgs e)
     {
@@ -288,6 +301,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var policy = await _services.Policy.GetAsync(_services.Paths.CodexPolicyFile);
         DelegationLevelBox.SelectedItem = policy.Level;
+    }
+
+    private async Task RefreshQuotaAsync()
+    {
+        _lastQuotaRefresh = DateTimeOffset.UtcNow;
+        var snapshot = await _services.Quota.ReadAsync();
+        if (snapshot.RemainingPercentage is not int remaining)
+        {
+            QuotaSummary.Text = $"N/A — {snapshot.Detail}";
+            QuotaProgress.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        QuotaSummary.Text = snapshot.Freshness == AgentRelay.Windows.QuotaFreshness.Stale
+            ? $"{remaining}% осталось · устаревшее значение · {snapshot.ObservedAt:yyyy-MM-dd HH:mm} UTC"
+            : $"{remaining}% осталось · обновлено {snapshot.ObservedAt:HH:mm:ss} UTC";
+        QuotaProgress.Value = remaining;
+        QuotaProgress.Visibility = Visibility.Visible;
+        QuotaProgress.ToolTip = snapshot.Detail;
     }
 
     private async Task RefreshProjectsAsync()
