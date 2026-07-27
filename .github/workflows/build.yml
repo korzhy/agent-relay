@@ -17,9 +17,9 @@ jobs:
       INNO_VERSION: "7.0.2"
       INNO_URL: "https://github.com/jrsoftware/issrc/releases/download/is-7_0_2/innosetup-7.0.2-x64.exe"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.423
 
@@ -68,7 +68,7 @@ jobs:
           "$hash  AgentRelaySetup-x64.exe" |
             Set-Content -Encoding ascii "outputs/AgentRelaySetup-x64.exe.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: AgentRelaySetup-x64
           path: |
