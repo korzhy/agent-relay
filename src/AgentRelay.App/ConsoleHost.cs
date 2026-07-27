@@ -23,6 +23,12 @@ internal static class ConsoleHost
         {
             ShowWindow(window, 0);
         }
+
+        // On Windows 11 the default terminal host can keep a blank Windows
+        // Terminal window alive even after hiding the legacy console HWND.
+        // GUI mode has no console work to perform, so detach from the console
+        // entirely. CLI mode never calls Hide() and remains attached.
+        FreeConsole();
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -31,6 +37,10 @@ internal static class ConsoleHost
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetConsoleWindow();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool FreeConsole();
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
