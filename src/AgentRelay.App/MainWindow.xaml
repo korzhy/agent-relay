@@ -1,0 +1,108 @@
+<Window x:Class="AgentRelay.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Agent Relay" Height="760" Width="1120" MinHeight="620" MinWidth="900"
+        Background="{StaticResource SurfaceBrush}" Foreground="#E8EDF5"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,20">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="AGENT RELAY" FontSize="26" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
+                <TextBlock Text="Assisted hand-off для Codex ↔ Antigravity Flash" Foreground="#9EABBE"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                <TextBlock Text="Flash executor" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+                <TextBlock Text="Antigravity / gemini-3.6-flash-high" Foreground="#9EABBE"/>
+            </StackPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="1" Margin="0,0,0,18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Background="{StaticResource CardBrush}" CornerRadius="10" Padding="18" Margin="0,0,10,0">
+                <StackPanel>
+                    <DockPanel>
+                        <TextBlock Text="Doctor / readiness" FontSize="17" FontWeight="SemiBold"/>
+                        <Button DockPanel.Dock="Right" Content="Проверить" Click="Doctor_Click"/>
+                    </DockPanel>
+                    <TextBlock x:Name="DoctorSummary" Text="Проверка..." TextWrapping="Wrap" Foreground="#B8C4D6"/>
+                    <Button Content="Установить / восстановить интеграцию Codex"
+                            HorizontalAlignment="Left" Margin="0,12,0,0" Click="RepairCodex_Click"/>
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Background="{StaticResource CardBrush}" CornerRadius="10" Padding="18" Margin="10,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="Порог внешнего делегирования" FontSize="17" FontWeight="SemiBold"/>
+                    <TextBlock Text="External delegation threshold — не reasoning effort Flash."
+                               Foreground="#9EABBE" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                    <DockPanel>
+                        <ComboBox x:Name="DelegationLevelBox" Width="150" Height="34"
+                                  HorizontalAlignment="Left"/>
+                        <Button Content="Применить" Click="ApplyPolicy_Click"/>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2" Background="{StaticResource CardBrush}" CornerRadius="10" Padding="18">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0" Margin="0,0,0,12">
+                    <TextBlock Text="Проекты" FontSize="17" FontWeight="SemiBold"/>
+                    <Button DockPanel.Dock="Right" Content="+ Зарегистрировать" Click="AddProject_Click"/>
+                </DockPanel>
+                <DataGrid x:Name="ProjectsGrid" Grid.Row="1" ItemsSource="{Binding Projects}"
+                          SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
+                          AutoGenerateColumns="False" IsReadOnly="True"
+                          Background="#171D27" Foreground="#E8EDF5"
+                          RowBackground="#171D27" AlternatingRowBackground="#1B2230"
+                          GridLinesVisibility="Horizontal" BorderThickness="0"
+                          SelectionMode="Single" SelectionChanged="ProjectsGrid_SelectionChanged">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Проект" Binding="{Binding Name}" Width="1.2*"/>
+                        <DataGridTextColumn Header="Путь" Binding="{Binding Path}" Width="2.4*"/>
+                        <DataGridTextColumn Header="Trust" Binding="{Binding Trust}" Width="0.7*"/>
+                        <DataGridTextColumn Header="Состояние" Binding="{Binding State}" Width="0.9*"/>
+                        <DataGridTextColumn Header="Детали" Binding="{Binding Detail}" Width="2*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Grid.Row="2" Margin="0,12,0,0">
+                    <TextBlock Text="Action / tool log (без hidden reasoning)" FontWeight="SemiBold"/>
+                    <TextBox x:Name="ActionLogBox" Height="74" Margin="0,6,0,0" Padding="8"
+                             IsReadOnly="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto"
+                             Background="#11161F" Foreground="#AFC0D5" BorderThickness="0"
+                             FontFamily="Consolas" FontSize="11"/>
+                </StackPanel>
+                <WrapPanel Grid.Row="3" Margin="0,14,0,0">
+                    <Button Content="Доверять workspace один раз" Click="Trust_Click"/>
+                    <Button Content="Опубликовать hand-off..." Click="Publish_Click"/>
+                    <Button Content="Pause" Click="Pause_Click"/>
+                    <Button Content="Resume" Click="Resume_Click"/>
+                    <Button Content="Открыть логи" Click="OpenLogs_Click"/>
+                    <Button Content="Копировать review prompt" Click="CopyReviewPrompt_Click"/>
+                    <Button Content="Удалить регистрацию" Click="RemoveProject_Click"/>
+                </WrapPanel>
+            </Grid>
+        </Border>
+
+        <DockPanel Grid.Row="3" Margin="0,14,0,0">
+            <TextBlock x:Name="StatusText" Foreground="#9EABBE" Text="Готово."/>
+            <TextBlock DockPanel.Dock="Right" Foreground="#718096"
+                       Text="Без телеметрии · без backend · autostart выключен"/>
+        </DockPanel>
+    </Grid>
+</Window>

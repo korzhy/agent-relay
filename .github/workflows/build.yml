@@ -1,0 +1,79 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build-test-package:
+    runs-on: windows-2025
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      INNO_VERSION: "7.0.2"
+      INNO_URL: "https://github.com/jrsoftware/issrc/releases/download/is-7_0_2/innosetup-7.0.2-x64.exe"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.423
+
+      - name: Test
+        shell: pwsh
+        run: dotnet test AgentRelay.sln -c Release --nologo
+
+      - name: Publish self-contained x64
+        shell: pwsh
+        run: >
+          dotnet publish src/AgentRelay.App/AgentRelay.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:Version=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.1.0-ci' }}
+          -o artifacts/publish --nologo
+
+      - name: Install pinned Inno Setup
+        shell: pwsh
+        run: |
+          Invoke-WebRequest $env:INNO_URL -OutFile "$env:RUNNER_TEMP\innosetup.exe"
+          $signature = Get-AuthenticodeSignature "$env:RUNNER_TEMP\innosetup.exe"
+          if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "Pyrsys") {
+            throw "Invalid Inno Setup signature: $($signature.Status)"
+          }
+          $process = Start-Process "$env:RUNNER_TEMP\innosetup.exe" `
+            -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /DIR=`"$env:RUNNER_TEMP\inno`"" `
+            -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Inno Setup install failed." }
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force outputs | Out-Null
+          $version = if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $env:GITHUB_REF_NAME.TrimStart("v")
+          } else { "0.1.0" }
+          & "$env:RUNNER_TEMP\inno\ISCC.exe" `
+            "/DMyAppVersion=$version" `
+            "/DPublishDir=$pwd\artifacts\publish" `
+            "/DOutputDir=$pwd\outputs" `
+            "installer\AgentRelay.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed." }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AgentRelaySetup-x64
+          path: outputs/AgentRelaySetup-x64.exe
+          if-no-files-found: error
+
+      - name: Publish tagged GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$env:GITHUB_REF_NAME" "outputs/AgentRelaySetup-x64.exe" --generate-notes

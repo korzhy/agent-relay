@@ -1,0 +1,64 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2BEFC25C-5335-4481-A1F4-EE4EC0BD5692}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentRelay.Core", "src\AgentRelay.Core\AgentRelay.Core.csproj", "{E3C3B571-6DB0-46CF-9605-6843F568A48E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentRelay.Windows", "src\AgentRelay.Windows\AgentRelay.Windows.csproj", "{397B3539-0D7F-4AC6-8245-35E4C497F981}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentRelay.App", "src\AgentRelay.App\AgentRelay.App.csproj", "{620E8355-8DD4-410F-9B8D-6A47713281A4}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{84932447-7696-4E50-90D9-B0A0F3A9D0AD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentRelay.Core.Tests", "tests\AgentRelay.Core.Tests\AgentRelay.Core.Tests.csproj", "{C9CEE521-9D55-43F0-A197-37237D9B275A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentRelay.IntegrationTests", "tests\AgentRelay.IntegrationTests\AgentRelay.IntegrationTests.csproj", "{BE942E2D-0E39-4C49-BEA8-87E3FE3A20B5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentRelay.FakeAgy", "tests\AgentRelay.FakeAgy\AgentRelay.FakeAgy.csproj", "{D17A762B-93E7-4F62-A3D8-76D491F61023}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E3C3B571-6DB0-46CF-9605-6843F568A48E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E3C3B571-6DB0-46CF-9605-6843F568A48E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E3C3B571-6DB0-46CF-9605-6843F568A48E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E3C3B571-6DB0-46CF-9605-6843F568A48E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{397B3539-0D7F-4AC6-8245-35E4C497F981}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{397B3539-0D7F-4AC6-8245-35E4C497F981}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{397B3539-0D7F-4AC6-8245-35E4C497F981}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{397B3539-0D7F-4AC6-8245-35E4C497F981}.Release|Any CPU.Build.0 = Release|Any CPU
+		{620E8355-8DD4-410F-9B8D-6A47713281A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{620E8355-8DD4-410F-9B8D-6A47713281A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{620E8355-8DD4-410F-9B8D-6A47713281A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{620E8355-8DD4-410F-9B8D-6A47713281A4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C9CEE521-9D55-43F0-A197-37237D9B275A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C9CEE521-9D55-43F0-A197-37237D9B275A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C9CEE521-9D55-43F0-A197-37237D9B275A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C9CEE521-9D55-43F0-A197-37237D9B275A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BE942E2D-0E39-4C49-BEA8-87E3FE3A20B5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BE942E2D-0E39-4C49-BEA8-87E3FE3A20B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BE942E2D-0E39-4C49-BEA8-87E3FE3A20B5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BE942E2D-0E39-4C49-BEA8-87E3FE3A20B5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D17A762B-93E7-4F62-A3D8-76D491F61023}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D17A762B-93E7-4F62-A3D8-76D491F61023}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D17A762B-93E7-4F62-A3D8-76D491F61023}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D17A762B-93E7-4F62-A3D8-76D491F61023}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E3C3B571-6DB0-46CF-9605-6843F568A48E} = {2BEFC25C-5335-4481-A1F4-EE4EC0BD5692}
+		{397B3539-0D7F-4AC6-8245-35E4C497F981} = {2BEFC25C-5335-4481-A1F4-EE4EC0BD5692}
+		{620E8355-8DD4-410F-9B8D-6A47713281A4} = {2BEFC25C-5335-4481-A1F4-EE4EC0BD5692}
+		{C9CEE521-9D55-43F0-A197-37237D9B275A} = {84932447-7696-4E50-90D9-B0A0F3A9D0AD}
+		{BE942E2D-0E39-4C49-BEA8-87E3FE3A20B5} = {84932447-7696-4E50-90D9-B0A0F3A9D0AD}
+		{D17A762B-93E7-4F62-A3D8-76D491F61023} = {84932447-7696-4E50-90D9-B0A0F3A9D0AD}
+	EndGlobalSection
+EndGlobal

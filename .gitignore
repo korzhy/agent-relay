@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+.idea/
+TestResults/
+artifacts/
+work/
+outputs/
+*.user
+*.suo
+*.nupkg
+*.snupkg
+.agent-relay/
