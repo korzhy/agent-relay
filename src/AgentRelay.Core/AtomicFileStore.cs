@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -6,6 +7,9 @@ namespace AgentRelay.Core;
 
 public sealed class AtomicFileStore
 {
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _pathLocks =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public async Task WriteTextAsync(
         string path,
         string content,
@@ -33,19 +37,7 @@ public sealed class AtomicFileStore
     {
         var json = JsonSerializer.Serialize(value, JsonSupport.Options) + Environment.NewLine;
         var bytes = new UTF8Encoding(false).GetBytes(NormalizeNewline(json));
-        if (File.Exists(path))
-        {
-            var existing = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-            if (CryptographicOperations.FixedTimeEquals(SHA256.HashData(existing), SHA256.HashData(bytes)))
-            {
-                return false;
-            }
-
-            throw new InvalidOperationException($"Immutable payload already exists: {path}");
-        }
-
-        await WriteBytesAsync(path, bytes, false, cancellationToken).ConfigureAwait(false);
-        return true;
+        return await WriteImmutableBytesAsync(path, bytes, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> WriteImmutableTextAsync(
@@ -54,19 +46,37 @@ public sealed class AtomicFileStore
         CancellationToken cancellationToken = default)
     {
         var bytes = new UTF8Encoding(false).GetBytes(NormalizeNewline(content));
-        if (File.Exists(path))
+        return await WriteImmutableBytesAsync(path, bytes, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> WriteImmutableBytesAsync(
+        string path,
+        byte[] bytes,
+        CancellationToken cancellationToken)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var pathLock = _pathLocks.GetOrAdd(fullPath, static _ => new SemaphoreSlim(1, 1));
+        await pathLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var existing = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-            if (CryptographicOperations.FixedTimeEquals(SHA256.HashData(existing), SHA256.HashData(bytes)))
+            if (File.Exists(fullPath))
             {
-                return false;
+                var existing = await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
+                if (CryptographicOperations.FixedTimeEquals(SHA256.HashData(existing), SHA256.HashData(bytes)))
+                {
+                    return false;
+                }
+
+                throw new InvalidOperationException($"Immutable payload already exists: {path}");
             }
 
-            throw new InvalidOperationException($"Immutable payload already exists: {path}");
+            await WriteBytesCoreAsync(fullPath, bytes, false, cancellationToken).ConfigureAwait(false);
+            return true;
         }
-
-        await WriteBytesAsync(path, bytes, false, cancellationToken).ConfigureAwait(false);
-        return true;
+        finally
+        {
+            pathLock.Release();
+        }
     }
 
     public async Task<T?> ReadJsonAsync<T>(string path, CancellationToken cancellationToken = default)
@@ -96,18 +106,36 @@ public sealed class AtomicFileStore
         return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     }
 
-    private static async Task WriteBytesAsync(
+    private async Task WriteBytesAsync(
         string path,
         byte[] bytes,
         bool createBackup,
         CancellationToken cancellationToken)
     {
         var fullPath = Path.GetFullPath(path);
+        var pathLock = _pathLocks.GetOrAdd(fullPath, static _ => new SemaphoreSlim(1, 1));
+        await pathLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await WriteBytesCoreAsync(fullPath, bytes, createBackup, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            pathLock.Release();
+        }
+    }
+
+    private static async Task WriteBytesCoreAsync(
+        string fullPath,
+        byte[] bytes,
+        bool createBackup,
+        CancellationToken cancellationToken)
+    {
         var directory = Path.GetDirectoryName(fullPath)
-            ?? throw new InvalidOperationException($"Path has no parent directory: {path}");
+            ?? throw new InvalidOperationException($"Path has no parent directory: {fullPath}");
         Directory.CreateDirectory(directory);
 
-        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp");
         var backupPath = createBackup && File.Exists(fullPath)
             ? fullPath + $".{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}.bak"
             : null;

@@ -112,4 +112,42 @@ public sealed class AtomicFileStoreTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _store.WriteImmutableJsonAsync(path, data2));
     }
+
+    [Fact]
+    public async Task WriteTextAsync_ConcurrentSamePath_RemainsAtomicAndValid()
+    {
+        var path = Path.Combine(_tempDir, "concurrent.txt");
+        var payloads = Enumerable.Range(0, 32)
+            .Select(index => $"payload-{index:D2}-{new string((char)('a' + index % 26), 4096)}")
+            .ToArray();
+
+        await Task.WhenAll(payloads.Select(payload => _store.WriteTextAsync(path, payload)));
+
+        var actual = await File.ReadAllTextAsync(path);
+        Assert.Contains(actual, payloads);
+        Assert.Empty(Directory.GetFiles(_tempDir, "*.tmp", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task WriteImmutableTextAsync_ConcurrentDifferentPayloads_AcceptsExactlyOne()
+    {
+        var path = Path.Combine(_tempDir, "immutable-concurrent.txt");
+        var attempts = Enumerable.Range(0, 16)
+            .Select(async index =>
+            {
+                try
+                {
+                    return await _store.WriteImmutableTextAsync(path, $"immutable-{index}");
+                }
+                catch (InvalidOperationException)
+                {
+                    return false;
+                }
+            });
+
+        var results = await Task.WhenAll(attempts);
+
+        Assert.Single(results, result => result);
+        Assert.StartsWith("immutable-", await File.ReadAllTextAsync(path), StringComparison.Ordinal);
+    }
 }
