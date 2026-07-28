@@ -24,21 +24,21 @@ Agent Relay fails closed if `agy models` does not list that exact model.
 1. Install the x64 setup package as the current user. Administrator rights are
    not required. The default location is
    `%LOCALAPPDATA%\Programs\AgentRelay`.
-2. Launch Agent Relay and run Doctor. It checks Codex App,
-   `%LOCALAPPDATA%\agy\bin\agy.exe`, the exact Flash model, and managed Codex
-   integration.
-3. Select **Install / repair Codex integration** once. Agent Relay installs an
-   idempotent managed block in `$HOME\.codex\AGENTS.md`, the global policy file,
-   and the `external-agent-delegation` skill. Foreign AGENTS content is
-   preserved and backups are created.
-4. Register a project. Registration writes only
-   `%LOCALAPPDATA%\AgentRelay\projects.json`; the repository remains untouched.
-5. Read the warning and grant one-time trust to that exact workspace. Until
-   then noninteractive dispatch is blocked.
-6. Publish a bounded task. The first real delegation creates `.agent-relay/`
-   transport files. Agent Relay does not edit the repository `.gitignore`.
-7. When the dashboard shows **report ready**, copy the review prompt into the
-   open Codex task. Codex validates hashes/gates and retains final authority.
+2. Launch Agent Relay once and choose the global delegation threshold:
+   `OFF`, `LOW`, `MEDIUM`, or `HIGH`. It is saved immediately.
+3. The installer creates the idempotent managed block in
+   `$HOME\.codex\AGENTS.md`, the global policy, and the
+   `external-agent-delegation` skill. Foreign AGENTS content is preserved.
+4. Continue working in Codex normally. Sol reads the threshold and invokes
+   `AgentRelay.exe` itself when a bounded hand-off is worthwhile; the Relay GUI
+   need not be running.
+5. At the first real hand-off for a workspace, approve the single trust
+   warning for that exact folder. Before approval the repository remains
+   untouched and `agy.exe` is not started.
+6. The dashboard shows one current mission and confirmed operational phases
+   for Sol and Flash. A validated report copies the exact review prompt to the
+   clipboard once; Sol still independently validates hashes, gates, semantics,
+   and final integration.
 
 Autostart is off by default. Closing the window minimizes to the tray; use the
 tray menu to exit.
@@ -51,8 +51,10 @@ through their normal UIs, and confirm `agy models` lists
 `gemini-3.6-flash-high`. Then run Agent Relay Doctor and **Install / repair
 Codex integration**.
 
-Project registration and workspace trust are deliberately machine-local and
-must be repeated. Copying a repository preserves its `.agent-relay` history if
+The internal workspace binding and trust are deliberately machine-local and
+must be repeated. There is no project-registration workflow in the normal GUI;
+Relay creates the local binding when Sol first attempts a hand-off. Copying a
+repository preserves its `.agent-relay` history if
 that directory was committed or otherwise transferred; Agent Relay does not
 sync it. Global policy is stored at
 `$HOME\.codex\external-agent-delegation.json`.
@@ -70,6 +72,9 @@ AgentRelay.exe project add C:\work\project
 AgentRelay.exe project trust C:\work\project
 AgentRelay.exe project list
 AgentRelay.exe project remove <id-or-path>
+AgentRelay.exe activity get --project <id-or-path>
+AgentRelay.exe activity set --project <id-or-path> --phase reviewing --summary "Sol reviews the report"
+AgentRelay.exe activity clear --project <id-or-path>
 AgentRelay.exe handoff publish --project <id-or-path> --task task.md --gate "dotnet test"
 AgentRelay.exe handoff status --project <id-or-path>
 AgentRelay.exe handoff cancel --project <id-or-path>
@@ -77,7 +82,8 @@ AgentRelay.exe handoff resume --project <id-or-path>
 AgentRelay.exe codex install|repair|remove
 ```
 
-`project trust` is an explicit consent operation: it authorizes Agent Relay to
+The `project` commands are diagnostic/compatibility interfaces, not the normal
+workflow. `project trust` is an explicit consent operation: it authorizes Agent Relay to
 start the exact Flash executor in that workspace using
 `--mode accept-edits --dangerously-skip-permissions`. Drive roots, the user
 profile root, Windows, Program Files, ProgramData, and system directories are
@@ -92,21 +98,26 @@ workspace-relative paths, globally unique handoff/run IDs, stable mission IDs,
 strictly increasing revisions, and exact UTC timestamps. Published task,
 report, and review payloads are immutable.
 
-The dashboard exposes `ready`, `running`, `waiting`, `stalled`,
-`quota exhausted`, `report ready`, and `paused`. FileSystemWatcher events,
+The dashboard maps `ready`, `running`, `waiting`, `stalled`,
+`quota exhausted`, `report ready`, and `paused` into a single mission view. It
+also shows explicit Sol phases (`evaluating`, `delegating`, `waitingForFlash`,
+`working`, `reviewing`, `integrating`, `completed`, `blocked`) from local
+atomic activity state. A phase older than 15 minutes is labelled as last known,
+not as live model activity. FileSystemWatcher events,
 debounce/hash suppression, a per-project mutex, and process health supervise
 the runner; no model calls poll unchanged files. A crash or missing/invalid
 report is not completion. Quota exhaustion appears only when actual process
 exit/output matches a known exhaustion pattern.
 
-The dashboard and `quota [--json]` command show the last observed percentage of
+The header and `quota [--json]` command use the last observed percentage of
 general Antigravity prompt credits when a compatible local
 `Quota update received` log is available. The value includes its source,
 timestamp, and fresh/stale status. Agent Relay extracts only the numeric credit
 fields and timestamp; it does not read process tokens or call Antigravity's
 private localhost API. This percentage is not a model-specific guarantee for
-`gemini-3.6-flash-high`. Without a compatible source the value is explicitly
-`N/A`, never invented.
+`gemini-3.6-flash-high`. A stale snapshot never shows a percentage in the main
+header; its old value and timestamp remain available in diagnostics. Without a
+compatible source the value is explicitly `N/A`, never invented.
 
 A report must claim `PASS`, `FAIL`, `BLOCKED`, or `UNVERIFIED` and list changed
 files, commands and exit codes, first failure, unavailable dependencies, and
@@ -160,7 +171,7 @@ Uninstall removes program files and invokes `codex remove` before deleting the
 executable. That command removes only the Agent Relay managed AGENTS block and
 owned skill. It restores a pre-existing skill/policy backup when safe, deletes
 an app-created policy only if its hash is still unchanged, and leaves a
-user-modified policy in place. Project registration, logs, trust decisions,
+user-modified policy in place. Internal workspace bindings, logs, trust decisions,
 and project `.agent-relay` history are preserved by default under
 `%LOCALAPPDATA%\AgentRelay` and in the project.
 
@@ -171,8 +182,8 @@ and project `.agent-relay` history are preserved by default under
 - No auto-update, cloud sync, or remote management.
 - Quota percentage is last-observed general prompt-credit capacity, not a
   model-specific reservation or dispatch guarantee.
-- Review hand-off is assisted: notification/copy prompt, not hidden Codex
-  execution.
+- Review hand-off is assisted: the prompt is copied once but never pasted,
+  submitted, or used to launch Codex secretly.
 - Repository transport history cleanup/retention is manual.
 - The installer is unsigned until a future public release pipeline is supplied
   a code-signing identity.

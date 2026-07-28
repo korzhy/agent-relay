@@ -13,6 +13,8 @@ public sealed class RelayServices
         PolicyService policy,
         ProtocolService protocol,
         RuntimeStore runtime,
+        SolActivityStore activity,
+        ReviewPromptDeliveryService delivery,
         RuntimeRecoveryService recovery,
         DoctorService doctor,
         CodexIntegrationService codex,
@@ -24,6 +26,8 @@ public sealed class RelayServices
         Policy = policy;
         Protocol = protocol;
         Runtime = runtime;
+        Activity = activity;
+        Delivery = delivery;
         Recovery = recovery;
         Doctor = doctor;
         Codex = codex;
@@ -36,6 +40,8 @@ public sealed class RelayServices
     public PolicyService Policy { get; }
     public ProtocolService Protocol { get; }
     public RuntimeStore Runtime { get; }
+    public SolActivityStore Activity { get; }
+    public ReviewPromptDeliveryService Delivery { get; }
     public RuntimeRecoveryService Recovery { get; }
     public DoctorService Doctor { get; }
     public CodexIntegrationService Codex { get; }
@@ -44,9 +50,25 @@ public sealed class RelayServices
     public static RelayServices Create()
     {
         var paths = AppPaths.FromEnvironment();
+        return Create(
+            paths,
+            Path.Combine(AppContext.BaseDirectory, "Assets", "external-agent-delegation"),
+            new ClipboardTextWriter(),
+            new SystemClock());
+    }
+
+    public static RelayServices Create(
+        AppPaths paths,
+        string skillSource,
+        IClipboardWriter clipboard,
+        IClock? clock = null)
+    {
         var files = new AtomicFileStore();
-        var clock = new SystemClock();
+        clock ??= new SystemClock();
         var runtime = new RuntimeStore(paths, files);
+        var activity = new SolActivityStore(paths, files, clock);
+        var delivery = new ReviewPromptDeliveryService(
+            paths, files, clipboard, clock);
         return new RelayServices(
             paths,
             files,
@@ -54,16 +76,18 @@ public sealed class RelayServices
             new PolicyService(files, clock),
             new ProtocolService(files, clock),
             runtime,
+            activity,
+            delivery,
             new RuntimeRecoveryService(runtime, clock),
             new DoctorService(paths, clock),
             new CodexIntegrationService(
                 paths,
                 files,
-                Path.Combine(AppContext.BaseDirectory, "Assets", "external-agent-delegation"),
+                skillSource,
                 clock),
             AntigravityQuotaService.FromEnvironment(clock));
     }
 
     public AgyRunner CreateRunner(RunnerOptions? options = null)
-        => new(Protocol, Runtime, new SystemClock(), options);
+        => new(Protocol, Runtime, new SystemClock(), options, Activity, Delivery);
 }

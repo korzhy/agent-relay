@@ -10,6 +10,11 @@ public sealed record ActionLogEntry(
     string Detail,
     int? ExitCode = null);
 
+public sealed record ActionLogReadResult(
+    IReadOnlyList<ActionLogEntry> Entries,
+    int InvalidRecordCount,
+    bool HasIncompleteTail);
+
 public sealed class RuntimeStore
 {
     private readonly AppPaths _paths;
@@ -31,6 +36,9 @@ public sealed class RuntimeStore
     public string ProjectLogDirectory(string projectId)
         => Path.Combine(_paths.LogsDirectory, projectId);
 
+    public string ActionLogPath(string projectId)
+        => Path.Combine(ProjectLogDirectory(projectId), "actions.jsonl");
+
     public Task<ProjectRuntimeState?> ReadAsync(
         string projectId,
         CancellationToken cancellationToken = default)
@@ -41,18 +49,122 @@ public sealed class RuntimeStore
 
     public async Task AppendLogAsync(ActionLogEntry entry, CancellationToken cancellationToken = default)
     {
-        var path = Path.Combine(ProjectLogDirectory(entry.ProjectId), "actions.jsonl");
+        var path = ActionLogPath(entry.ProjectId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var line = JsonSerializer.Serialize(entry, JsonSupport.Options) + Environment.NewLine;
+        var line = JsonSerializer.Serialize(entry, JsonSupport.CompactOptions) + Environment.NewLine;
         await _logLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await File.AppendAllTextAsync(path, line, cancellationToken).ConfigureAwait(false);
+            var separator = string.Empty;
+            if (File.Exists(path) && new FileInfo(path).Length > 0)
+            {
+                await using var tail = new FileStream(
+                    path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                tail.Seek(-1, SeekOrigin.End);
+                if (tail.ReadByte() is not (byte)'\n')
+                {
+                    separator = Environment.NewLine;
+                }
+            }
+            await File.AppendAllTextAsync(path, separator + line, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _logLock.Release();
         }
+    }
+
+    public async Task<ActionLogReadResult> ReadLogAsync(
+        string projectId,
+        int maximumEntries = 50,
+        CancellationToken cancellationToken = default)
+    {
+        if (maximumEntries <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumEntries));
+        }
+
+        var path = ActionLogPath(projectId);
+        if (!File.Exists(path))
+        {
+            return new ActionLogReadResult([], 0, false);
+        }
+
+        var text = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+        var entries = new List<ActionLogEntry>();
+        var invalid = 0;
+        var start = -1;
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+
+        for (var index = 0; index < text.Length; index++)
+        {
+            var character = text[index];
+            if (start < 0)
+            {
+                if (character == '{')
+                {
+                    start = index;
+                    depth = 1;
+                    inString = false;
+                    escaped = false;
+                }
+                continue;
+            }
+
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                }
+                else if (character == '\\')
+                {
+                    escaped = true;
+                }
+                else if (character == '"')
+                {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (character == '"')
+            {
+                inString = true;
+            }
+            else if (character == '{')
+            {
+                depth++;
+            }
+            else if (character == '}' && --depth == 0)
+            {
+                try
+                {
+                    var entry = JsonSerializer.Deserialize<ActionLogEntry>(
+                        text[start..(index + 1)], JsonSupport.Options);
+                    if (entry is null)
+                    {
+                        invalid++;
+                    }
+                    else
+                    {
+                        entries.Add(entry);
+                    }
+                }
+                catch (JsonException)
+                {
+                    invalid++;
+                }
+                start = -1;
+            }
+        }
+
+        return new ActionLogReadResult(
+            entries.TakeLast(maximumEntries).ToArray(),
+            invalid,
+            start >= 0);
     }
 
     public async Task SetPausedAsync(

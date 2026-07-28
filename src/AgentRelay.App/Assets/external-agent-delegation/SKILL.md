@@ -1,52 +1,58 @@
 ---
 name: external-agent-delegation
-description: Route bounded implementation to an external agent while Codex retains architecture, security, final review, and integration authority.
+description: Route bounded, locally verifiable implementation through Agent Relay to Antigravity gemini-3.6-flash-high when the active delegation threshold makes that cheaper than direct Codex work; retain Sol architecture, security, review, and integration authority.
 ---
 
 # External Agent Delegation
 
-Use external implementation only when specification, supervision, review, and
-expected correction cost are lower than direct Codex implementation.
-
 ## Resolve policy
 
 Read `$HOME\.codex\external-agent-delegation.json`. Apply an explicit user
-instruction first, then an optional project override at
-`.codex/external-agent-delegation.json`, then global policy, then safe default
-`low`. `off` is a hard stop.
+instruction first, then this global policy, then safe default `low`. The Relay
+GUI setting is global for every workspace; do not let a project file override
+global `off`.
 
-The delegation threshold (`off|low|medium|high`) controls routing willingness.
-It is separate from model effort. The only supported executor is exactly
-`Antigravity / gemini-3.6-flash-high`; never substitute another model.
-
-## Routing
-
-- Low: only mechanical, unambiguous, locally provable work with roughly 2x
-  expected Codex-effort savings.
-- Medium: coherent 30–90 minute implementation with exact contracts and local
-  gates; allow one correction.
-- High: prefer locally provable external implementation; transfer to Codex
+- `off`: do not consider or invoke Flash.
+- `low`: delegate only mechanical, unambiguous work with about 2x expected
+  Codex-effort savings.
+- `medium`: allow a coherent 30–90 minute bounded implementation with exact
+  contracts and local gates; allow one correction.
+- `high`: prefer Flash for locally provable implementation; transfer to Codex
   after the same root cause repeats twice.
 
-Codex always owns architecture, security, concurrency, lifecycle acceptance,
+Threshold is separate from model effort. Use exactly
+`Antigravity / gemini-3.6-flash-high`; never substitute a model.
+
+## Dispatch through Agent Relay
+
+Use `%LOCALAPPDATA%\Programs\AgentRelay\AgentRelay.exe`. The GUI need not be
+running.
+
+1. If delegation is genuinely competitive, record the decision:
+   `activity set --project <workspace> --phase evaluating --summary <safe summary>`.
+2. Write a bounded task file outside the workspace. Include exact scope,
+   prohibited actions, acceptance criteria, and deterministic gates.
+3. Run:
+   `handoff publish --project <workspace> --task <file> --title <title> --gate <command>`.
+4. If Relay returns exit `5` / `trustRequired`, let the user answer Relay's
+   one-time workspace prompt. Never invoke `project trust` for the user.
+5. If Relay returns exit `6` / `delegationOff`, continue directly without
+   external execution.
+6. Treat crash, invalid/missing report, stalled, paused, and quota exhausted as
+   non-completion. Do not use a model call to poll unchanged state.
+
+Relay automatically records `delegating`, `waitingForFlash`, and the validated
+report transition. Use `activity set` for Sol's real subsequent phases:
+`reviewing`, `integrating`, `completed`, or `blocked`. Do not claim continuous
+Sol activity when no explicit operational phase exists.
+
+## Review and integrate
+
+Read `references/handoff-protocol.md` when validating an actual report. Verify
+immutable IDs and SHA-256 bindings, run the first deterministic gate, then
+inspect semantics independently. The implementer report is a claim, not
+evidence.
+
+Sol always owns architecture, security, concurrency, lifecycle acceptance,
 final readiness, production, deploy, secrets, irreversible actions, and final
-integration.
-
-## Hand-off
-
-Use the Agent Relay protocol described in
-`references/handoff-protocol.md`. Require immutable payloads, SHA-256 binding,
-globally unique IDs, stable mission ID, strictly increasing revision, exact
-executor/model, UTC timestamps, and PASS/FAIL/BLOCKED/UNVERIFIED truth reports.
-
-Supervise through filesystem events, hashes, debounce, mutex, and process
-health. Never invoke a model to poll unchanged state. A crash or invalid report
-is not completion. Quota exhaustion may be reported only from actual exit or
-output evidence.
-
-## Review
-
-Validate hashes, run the first deterministic gate, and independently inspect
-semantics. An implementer report is a claim, not evidence. Never let an
-external agent deploy, push, touch production, handle secrets, authorize
-security/final readiness, or perform irreversible actions.
+integration. Never delegate or authorize those responsibilities.

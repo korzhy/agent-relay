@@ -60,6 +60,16 @@ public sealed class CodexIntegrationServiceTests : IDisposable
         Assert.Equal(DelegationLevel.Medium, policy.Level);
         Assert.Equal(AgentRelayConstants.Provider, policy.PreferredExecutor.Provider);
         Assert.Equal(AgentRelayConstants.Model, policy.PreferredExecutor.Model);
+
+        var agentsText = await File.ReadAllTextAsync(_appPaths.CodexAgentsFile);
+        var skillText = await File.ReadAllTextAsync(
+            Path.Combine(_appPaths.CodexSkillDirectory, "SKILL.md"));
+        Assert.Contains("%LOCALAPPDATA%\\Programs\\AgentRelay\\AgentRelay.exe", agentsText);
+        Assert.Contains("the Relay GUI does not need to be running", agentsText);
+        Assert.Contains("never grant `project trust`", agentsText);
+        Assert.Contains("activity set --project", skillText);
+        Assert.Contains("handoff publish --project", skillText);
+        Assert.Contains("Never invoke `project trust`", skillText);
     }
 
     [Fact]

@@ -221,6 +221,10 @@ public sealed class CodexIntegrationService
             - Effort changes never relax validation, security, or final-integration responsibilities.
             - Resolve external delegation through `$HOME\.codex\external-agent-delegation.json`.
             - Delegation threshold and Flash model effort are separate settings. The exact executor is `Antigravity / gemini-3.6-flash-high`.
+            - When delegation is worthwhile, invoke `%LOCALAPPDATA%\Programs\AgentRelay\AgentRelay.exe`; the Relay GUI does not need to be running.
+            - Record only explicit operational phases through Agent Relay `activity`; never present hidden reasoning or infer continuous Sol activity.
+            - Relay may register a workspace locally, but Sol must never grant `project trust` on the user's behalf.
+            - After a valid report, Sol independently reviews deterministic evidence, records `reviewing` / `integrating` / `completed`, and owns final integration.
             - External agents never authorize architecture, security acceptance, final readiness, production, deploy, secrets, or irreversible actions.
             {AgentRelayConstants.ManagedBlockEnd}
             """;

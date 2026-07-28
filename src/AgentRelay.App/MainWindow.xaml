@@ -1,10 +1,10 @@
 <Window x:Class="AgentRelay.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Agent Relay" Height="800" Width="1120" MinHeight="660" MinWidth="900"
+        Title="Agent Relay" Height="720" Width="1040" MinHeight="650" MinWidth="900"
         Background="{StaticResource SurfaceBrush}" Foreground="#E8EDF5"
         WindowStartupLocation="CenterScreen">
-    <Grid Margin="24">
+    <Grid Margin="28">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -12,57 +12,54 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" Margin="0,0,0,20">
-            <StackPanel DockPanel.Dock="Left">
-                <TextBlock Text="AGENT RELAY" FontSize="26" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
-                <TextBlock Text="Assisted hand-off для Codex ↔ Antigravity Flash" Foreground="#9EABBE"/>
-            </StackPanel>
-            <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
-                <TextBlock Text="Flash executor" FontWeight="SemiBold" HorizontalAlignment="Right"/>
-                <TextBlock Text="Antigravity / gemini-3.6-flash-high" Foreground="#9EABBE"/>
-            </StackPanel>
-        </DockPanel>
-
-        <Grid Grid.Row="1" Margin="0,0,0,18">
+        <Grid Grid.Row="0" Margin="0,0,0,20">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <Border Background="{StaticResource CardBrush}" CornerRadius="10" Padding="18" Margin="0,0,10,0">
-                <StackPanel>
-                    <DockPanel>
-                        <TextBlock Text="Doctor / readiness" FontSize="17" FontWeight="SemiBold"/>
-                        <Button DockPanel.Dock="Right" Content="Проверить" Click="Doctor_Click"/>
-                    </DockPanel>
-                    <TextBlock x:Name="DoctorSummary" Text="Проверка..." TextWrapping="Wrap" Foreground="#B8C4D6"/>
-                    <Button Content="Установить / восстановить интеграцию Codex"
-                            HorizontalAlignment="Left" Margin="0,12,0,0" Click="RepairCodex_Click"/>
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="1" Background="{StaticResource CardBrush}" CornerRadius="10" Padding="18" Margin="10,0,0,0">
-                <StackPanel>
-                    <TextBlock Text="Порог внешнего делегирования" FontSize="17" FontWeight="SemiBold"/>
-                    <TextBlock Text="External delegation threshold — не reasoning effort Flash."
-                               Foreground="#9EABBE" TextWrapping="Wrap" Margin="0,4,0,10"/>
-                    <DockPanel>
-                        <ComboBox x:Name="DelegationLevelBox" Width="150" Height="34"
-                                  HorizontalAlignment="Left"/>
-                        <Button Content="Применить" Click="ApplyPolicy_Click"/>
-                    </DockPanel>
-                    <Separator Margin="0,14,0,10" Background="#354052"/>
-                    <TextBlock Text="Prompt-credit quota" FontWeight="SemiBold"/>
-                    <TextBlock x:Name="QuotaSummary" Text="Проверка..." Foreground="#B8C4D6"
-                               TextWrapping="Wrap" Margin="0,4,0,6"/>
-                    <ProgressBar x:Name="QuotaProgress" Height="7" Maximum="100" Minimum="0"
-                                 Visibility="Collapsed"/>
-                    <TextBlock Text="Общий остаток credits, не model-specific лимит Flash."
-                               Foreground="#718096" TextWrapping="Wrap" Margin="0,5,0,0"
-                               FontSize="11"/>
-                </StackPanel>
-            </Border>
+            <StackPanel>
+                <TextBlock Text="AGENT RELAY" FontSize="28" FontWeight="Bold"
+                           Foreground="{StaticResource AccentBrush}"/>
+                <TextBlock Text="Sol управляет передачей проверяемой работы внешнему Flash"
+                           Foreground="#AAB7CA" FontSize="13"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border x:Name="QuotaChip" Style="{StaticResource HeaderChipStyle}"
+                        ToolTipService.ShowDuration="30000">
+                    <TextBlock x:Name="QuotaText" Text="Квота: проверка…"/>
+                </Border>
+                <Button x:Name="HealthButton" Content="Relay: проверка…"
+                        Style="{StaticResource HeaderButtonStyle}" Click="Health_Click"/>
+            </StackPanel>
         </Grid>
 
-        <Border Grid.Row="2" Background="{StaticResource CardBrush}" CornerRadius="10" Padding="18">
+        <Border Grid.Row="1" Background="{StaticResource CardBrush}" CornerRadius="14"
+                Padding="20" Margin="0,0,0,18">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Порог внешнего делегирования" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="ThresholdDescription"
+                               Text="Определяет, насколько охотно Sol отдаёт подходящую работу Flash."
+                               Foreground="#9EABBE" Margin="0,4,0,0"/>
+                </StackPanel>
+                <UniformGrid Grid.Column="1" Rows="1" Columns="4" Margin="20,0,0,0">
+                    <RadioButton x:Name="ThresholdOff" Content="OFF" Tag="Off" GroupName="Threshold"
+                                 Style="{StaticResource ThresholdButtonStyle}" Checked="Threshold_Checked"/>
+                    <RadioButton x:Name="ThresholdLow" Content="LOW" Tag="Low" GroupName="Threshold"
+                                 Style="{StaticResource ThresholdButtonStyle}" Checked="Threshold_Checked"/>
+                    <RadioButton x:Name="ThresholdMedium" Content="MEDIUM" Tag="Medium" GroupName="Threshold"
+                                 Style="{StaticResource ThresholdButtonStyle}" Checked="Threshold_Checked"/>
+                    <RadioButton x:Name="ThresholdHigh" Content="HIGH" Tag="High" GroupName="Threshold"
+                                 Style="{StaticResource ThresholdButtonStyle}" Checked="Threshold_Checked"/>
+                </UniformGrid>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" Background="{StaticResource CardBrush}" CornerRadius="14" Padding="22">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -70,48 +67,101 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <DockPanel Grid.Row="0" Margin="0,0,0,12">
-                    <TextBlock Text="Проекты" FontSize="17" FontWeight="SemiBold"/>
-                    <Button DockPanel.Dock="Right" Content="+ Зарегистрировать" Click="AddProject_Click"/>
-                </DockPanel>
-                <DataGrid x:Name="ProjectsGrid" Grid.Row="1" ItemsSource="{Binding Projects}"
-                          SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
-                          AutoGenerateColumns="False" IsReadOnly="True"
-                          Background="#171D27" Foreground="#E8EDF5"
-                          RowBackground="#171D27" AlternatingRowBackground="#1B2230"
-                          GridLinesVisibility="Horizontal" BorderThickness="0"
-                          SelectionMode="Single" SelectionChanged="ProjectsGrid_SelectionChanged">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Проект" Binding="{Binding Name}" Width="1.2*"/>
-                        <DataGridTextColumn Header="Путь" Binding="{Binding Path}" Width="2.4*"/>
-                        <DataGridTextColumn Header="Trust" Binding="{Binding Trust}" Width="0.7*"/>
-                        <DataGridTextColumn Header="Состояние" Binding="{Binding State}" Width="0.9*"/>
-                        <DataGridTextColumn Header="Детали" Binding="{Binding Detail}" Width="2*"/>
-                    </DataGrid.Columns>
-                </DataGrid>
-                <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                    <TextBlock Text="Action / tool log (без hidden reasoning)" FontWeight="SemiBold"/>
-                    <TextBox x:Name="ActionLogBox" Height="74" Margin="0,6,0,0" Padding="8"
-                             IsReadOnly="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto"
-                             Background="#11161F" Foreground="#AFC0D5" BorderThickness="0"
-                             FontFamily="Consolas" FontSize="11"/>
-                </StackPanel>
-                <WrapPanel Grid.Row="3" Margin="0,14,0,0">
-                    <Button Content="Доверять workspace один раз" Click="Trust_Click"/>
-                    <Button Content="Опубликовать hand-off..." Click="Publish_Click"/>
-                    <Button Content="Pause" Click="Pause_Click"/>
-                    <Button Content="Resume" Click="Resume_Click"/>
-                    <Button Content="Открыть логи" Click="OpenLogs_Click"/>
-                    <Button Content="Копировать review prompt" Click="CopyReviewPrompt_Click"/>
-                    <Button Content="Удалить регистрацию" Click="RemoveProject_Click"/>
-                </WrapPanel>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock x:Name="MissionTitleText" Text="Нет активной делегации"
+                                   FontSize="20" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="MissionMetaText" Text="Sol использует Flash только когда порог и задача это оправдывают."
+                                   Foreground="#91A0B5" Margin="0,5,0,0"/>
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="Antigravity / gemini-3.6-flash-high"
+                               Foreground="#8EA0BA" VerticalAlignment="Top" Margin="18,4,0,0"/>
+                </Grid>
+
+                <Grid Grid.Row="1" Margin="0,22,0,18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="90"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Background="#182334" CornerRadius="12" Padding="20">
+                        <StackPanel>
+                            <DockPanel>
+                                <Ellipse x:Name="SolDot" Width="11" Height="11" Fill="#718096"
+                                         Margin="0,3,9,0" VerticalAlignment="Top"/>
+                                <TextBlock Text="SOL · ORCHESTRATOR" FontSize="12" FontWeight="Bold"
+                                           Foreground="#8DB7FF"/>
+                            </DockPanel>
+                            <TextBlock x:Name="SolStatusText" Text="Статус не подтверждён"
+                                       FontSize="23" FontWeight="SemiBold" Margin="0,14,0,6"
+                                       TextWrapping="Wrap"/>
+                            <TextBlock x:Name="SolDetailText"
+                                       Text="Нет явной операционной фазы от текущей задачи Codex."
+                                       Foreground="#B4C0D1" TextWrapping="Wrap" MinHeight="44"/>
+                            <TextBlock x:Name="SolAgeText" Text="" Foreground="#718096"
+                                       FontSize="11" Margin="0,13,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock Text="→" FontSize="38" Foreground="#586A82" HorizontalAlignment="Center"/>
+                        <TextBlock Text="HAND-OFF" FontSize="10" FontWeight="Bold"
+                                   Foreground="#718096" HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <Border Grid.Column="2" Background="#182B29" CornerRadius="12" Padding="20">
+                        <StackPanel>
+                            <DockPanel>
+                                <Ellipse x:Name="FlashDot" Width="11" Height="11" Fill="#718096"
+                                         Margin="0,3,9,0" VerticalAlignment="Top"/>
+                                <TextBlock Text="FLASH · EXECUTOR" FontSize="12" FontWeight="Bold"
+                                           Foreground="#6BE3C2"/>
+                            </DockPanel>
+                            <TextBlock x:Name="FlashStatusText" Text="Не задействован"
+                                       FontSize="23" FontWeight="SemiBold" Margin="0,14,0,6"
+                                       TextWrapping="Wrap"/>
+                            <TextBlock x:Name="FlashDetailText"
+                                       Text="Нет активного внешнего runner."
+                                       Foreground="#B4C0D1" TextWrapping="Wrap" MinHeight="44"/>
+                            <TextBlock x:Name="FlashAgeText" Text="" Foreground="#718096"
+                                       FontSize="11" Margin="0,13,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <UniformGrid Grid.Row="2" Rows="1" Columns="5" Margin="0,0,0,16">
+                    <TextBlock x:Name="DecisionStep" Text="1  Решение Sol" Style="{StaticResource MissionStepStyle}"/>
+                    <TextBlock x:Name="FlashStep" Text="2  Работа Flash" Style="{StaticResource MissionStepStyle}"/>
+                    <TextBlock x:Name="ReportStep" Text="3  Отчёт" Style="{StaticResource MissionStepStyle}"/>
+                    <TextBlock x:Name="ReviewStep" Text="4  Проверка Sol" Style="{StaticResource MissionStepStyle}"/>
+                    <TextBlock x:Name="IntegrateStep" Text="5  Интеграция" Style="{StaticResource MissionStepStyle}"/>
+                </UniformGrid>
+
+                <Grid Grid.Row="3">
+                    <TextBlock x:Name="LastActionText" Text="Без hidden reasoning · только подтверждённые действия"
+                               Foreground="#8291A7" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <Border x:Name="ContextPanel" Background="#2B2530" CornerRadius="8" Padding="12"
+                            Visibility="Collapsed">
+                        <DockPanel>
+                            <Button x:Name="ContextActionButton" DockPanel.Dock="Right"
+                                    Content="Подробнее" Click="ContextAction_Click"
+                                    Margin="16,0,0,0"/>
+                            <TextBlock x:Name="ContextText" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </Grid>
         </Border>
 
-        <DockPanel Grid.Row="3" Margin="0,14,0,0">
-            <TextBlock x:Name="StatusText" Foreground="#9EABBE" Text="Готово."/>
-            <TextBlock DockPanel.Dock="Right" Foreground="#718096"
+        <Grid Grid.Row="3" Margin="0,14,0,0">
+            <TextBlock x:Name="StatusText" Foreground="#91A0B5" Text="Готово."/>
+            <TextBlock HorizontalAlignment="Right" Foreground="#627086"
                        Text="Без телеметрии · без backend · autostart выключен"/>
-        </DockPanel>
+        </Grid>
     </Grid>
 </Window>

@@ -34,6 +34,8 @@ public sealed class AgyRunner
 
     private readonly ProtocolService _protocol;
     private readonly RuntimeStore _runtime;
+    private readonly SolActivityStore? _activity;
+    private readonly ReviewPromptDeliveryService? _delivery;
     private readonly IClock _clock;
     private readonly RunnerOptions _options;
 
@@ -41,12 +43,16 @@ public sealed class AgyRunner
         ProtocolService protocol,
         RuntimeStore runtime,
         IClock? clock = null,
-        RunnerOptions? options = null)
+        RunnerOptions? options = null,
+        SolActivityStore? activity = null,
+        ReviewPromptDeliveryService? delivery = null)
     {
         _protocol = protocol;
         _runtime = runtime;
         _clock = clock ?? new SystemClock();
         _options = options ?? RunnerOptions.Default;
+        _activity = activity;
+        _delivery = delivery;
     }
 
     public async Task<RunnerResult> RunAsync(
@@ -201,6 +207,17 @@ public sealed class AgyRunner
             _clock.UtcNow, project.Id, "dispatch",
             $"handoff={handoff.Control.HandoffId} revision={handoff.Control.Revision} model={AgentRelayConstants.Model}"),
             cancellationToken).ConfigureAwait(false);
+        if (_activity is not null)
+        {
+            await _activity.SetAsync(
+                project,
+                SolActivityPhase.WaitingForFlash,
+                "Задача передана Flash; Sol ожидает структурированный отчёт.",
+                handoff.Control.MissionId,
+                handoff.Control.HandoffId,
+                "Agent Relay runner",
+                cancellationToken).ConfigureAwait(false);
+        }
 
         var stdoutTask = CaptureAsync(process.StandardOutput, stdoutPath, RecordActivity);
         var stderrTask = CaptureAsync(process.StandardError, stderrPath, RecordActivity);
@@ -280,10 +297,28 @@ public sealed class AgyRunner
                 .ConfigureAwait(false);
             var reviewPromptPath = WorkspaceSafety.ResolveRelative(
                 project.Path, reportEnvelope.ReviewPromptPath);
+            var detail = "Validated report is ready for independent Codex review.";
+            if (_delivery is not null && reportEnvelope.ReviewAttemptId is not null)
+            {
+                var delivery = await _delivery.DeliverAsync(
+                    project, reportEnvelope.ReviewAttemptId, reviewPromptPath, cancellationToken)
+                    .ConfigureAwait(false);
+                detail = delivery.Succeeded
+                    ? "Validated report is ready; the exact review prompt was copied to clipboard."
+                    : $"Validated report is ready; clipboard copy failed: {delivery.Error}";
+                await _runtime.AppendLogAsync(
+                    new ActionLogEntry(
+                        _clock.UtcNow,
+                        project.Id,
+                        delivery.Succeeded ? "prompt-copy" : "prompt-copy-failed",
+                        delivery.Succeeded
+                            ? $"reviewAttemptId={reportEnvelope.ReviewAttemptId}"
+                            : delivery.Error ?? "Clipboard copy failed."),
+                    cancellationToken).ConfigureAwait(false);
+            }
             return await FinishAsync(
                 project, handoff, RelayState.ReportReady, exitCode,
-                "Validated report is ready for independent Codex review.",
-                reviewPromptPath, cancellationToken).ConfigureAwait(false);
+                detail, reviewPromptPath, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is InvalidDataException or JsonException or IOException)
@@ -322,6 +357,18 @@ public sealed class AgyRunner
         await _runtime.AppendLogAsync(new ActionLogEntry(
             _clock.UtcNow, project.Id, "complete", detail, exitCode), cancellationToken)
             .ConfigureAwait(false);
+        if (_activity is not null &&
+            state is RelayState.Stalled or RelayState.QuotaExhausted or RelayState.Paused)
+        {
+            await _activity.SetAsync(
+                project,
+                SolActivityPhase.Blocked,
+                detail,
+                handoff.Control.MissionId,
+                handoff.Control.HandoffId,
+                "Agent Relay runner",
+                cancellationToken).ConfigureAwait(false);
+        }
         return new RunnerResult(state, exitCode, detail, reviewPromptPath);
     }
 

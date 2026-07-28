@@ -53,7 +53,15 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         var request = new MissionRequest("Test Mission", "fake-mode:pass", new[] { "gate1" });
         var handoff = await _protocol.PublishAsync(projectPath, request);
 
-        var runner = new AgyRunner(_protocol, _runtimeStore, options: _fastOptions);
+        var activityStore = new SolActivityStore(_appPaths, _files);
+        var clipboard = new RecordingClipboard();
+        var delivery = new ReviewPromptDeliveryService(_appPaths, _files, clipboard);
+        var runner = new AgyRunner(
+            _protocol,
+            _runtimeStore,
+            options: _fastOptions,
+            activity: activityStore,
+            delivery: delivery);
         var agyPath = GetFakeAgyPath();
 
         var result = await runner.RunAsync(registered, handoff, agyPath);
@@ -62,6 +70,10 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         Assert.Equal(0, result.ExitCode);
         Assert.NotNull(result.ReviewPromptPath);
         Assert.True(File.Exists(result.ReviewPromptPath));
+        Assert.Equal(1, clipboard.WriteCount);
+        Assert.Contains("reviewAttemptId:", clipboard.LastText);
+        Assert.True((await delivery.GetAsync(registered.Id))?.Succeeded);
+        Assert.Equal(SolActivityPhase.WaitingForFlash, (await activityStore.GetAsync(registered.Id))?.Phase);
     }
 
     [Fact]
@@ -285,5 +297,18 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
             dir = parent;
         }
         return dir ?? throw new DirectoryNotFoundException("AgentRelay.sln not found");
+    }
+
+    private sealed class RecordingClipboard : IClipboardWriter
+    {
+        public int WriteCount { get; private set; }
+        public string LastText { get; private set; } = string.Empty;
+
+        public Task WriteTextAsync(string text, CancellationToken cancellationToken = default)
+        {
+            WriteCount++;
+            LastText = text;
+            return Task.CompletedTask;
+        }
     }
 }

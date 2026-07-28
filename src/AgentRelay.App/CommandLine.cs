@@ -19,11 +19,64 @@ public static class CommandLine
             "quota" => await QuotaAsync(services, args, cancellationToken),
             "policy" => await PolicyAsync(services, args, cancellationToken),
             "project" => await ProjectAsync(services, args, cancellationToken),
+            "activity" => await ActivityAsync(services, args, cancellationToken),
             "handoff" => await HandoffAsync(services, args, cancellationToken),
             "codex" => await CodexAsync(services, args, cancellationToken),
             "--help" or "-h" or "help" => Help(),
             _ => throw new ArgumentException($"Unknown command: {args[0]}")
         };
+    }
+
+    private static async Task<int> ActivityAsync(
+        RelayServices services,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        Require(args, 2, "activity get|set|clear --project <id|path>");
+        var projectKey = Option(args, "--project") ??
+                         throw new ArgumentException("--project <id|path> is required.");
+        var action = args[1].ToLowerInvariant();
+        var project = await services.Projects.FindAsync(projectKey, cancellationToken);
+        if (project is null && action == "set" && Directory.Exists(projectKey))
+        {
+            project = await services.Projects.AddAsync(projectKey, cancellationToken);
+        }
+        if (project is null)
+        {
+            throw new KeyNotFoundException($"Project is not registered: {projectKey}");
+        }
+
+        switch (action)
+        {
+            case "get":
+                Console.WriteLine(JsonSerializer.Serialize(
+                    await services.Activity.GetAsync(project.Id, cancellationToken), JsonSupport.Options));
+                return 0;
+            case "clear":
+                await services.Activity.ClearAsync(project.Id);
+                return 0;
+            case "set":
+                var phaseText = Option(args, "--phase") ??
+                                throw new ArgumentException("--phase <phase> is required.");
+                if (!Enum.TryParse<SolActivityPhase>(phaseText, true, out var phase))
+                {
+                    throw new ArgumentException($"Invalid Sol activity phase: {phaseText}");
+                }
+                var summary = Option(args, "--summary") ??
+                              throw new ArgumentException("--summary <text> is required.");
+                var activity = await services.Activity.SetAsync(
+                    project,
+                    phase,
+                    summary,
+                    Option(args, "--mission"),
+                    Option(args, "--handoff"),
+                    SolActivity.CodexSource,
+                    cancellationToken);
+                Console.WriteLine(JsonSerializer.Serialize(activity, JsonSupport.Options));
+                return 0;
+            default:
+                throw new ArgumentException($"Unknown activity action: {args[1]}");
+        }
     }
 
     private static async Task<int> QuotaAsync(
@@ -133,41 +186,122 @@ public static class CommandLine
         Require(args, 2, "handoff publish|status|cancel|resume");
         var projectKey = Option(args, "--project") ??
                          throw new ArgumentException("--project <id|path> is required.");
-        var project = await services.Projects.FindAsync(projectKey, cancellationToken)
-            ?? throw new KeyNotFoundException($"Project is not registered: {projectKey}");
+        var project = await services.Projects.FindAsync(projectKey, cancellationToken);
 
         switch (args[1].ToLowerInvariant())
         {
             case "status":
+                if (project is null)
+                {
+                    throw new KeyNotFoundException($"Project is not registered: {projectKey}");
+                }
                 Console.WriteLine(JsonSerializer.Serialize(
                     await services.Recovery.RecoverAsync(project, cancellationToken), JsonSupport.Options));
                 return 0;
             case "cancel":
+                if (project is null)
+                {
+                    throw new KeyNotFoundException($"Project is not registered: {projectKey}");
+                }
                 await CancelRunnerAsync(services, project, cancellationToken);
                 await services.Protocol.CancelAsync(project.Path, "Cancelled by user.", cancellationToken);
                 return 0;
             case "resume":
+                if (project is null)
+                {
+                    throw new KeyNotFoundException($"Project is not registered: {projectKey}");
+                }
                 await services.Runtime.SetPausedAsync(
                     project, false, new SystemClock(), cancellationToken);
                 return 0;
             case "publish":
+                var workspace = project?.Path ?? WorkspaceSafety.Validate(projectKey);
+                var policy = await services.Policy.GetAsync(
+                    services.Paths.CodexPolicyFile, cancellationToken: cancellationToken);
+                if (policy.Level == DelegationLevel.Off)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(
+                        new
+                        {
+                            status = "delegationOff",
+                            detail = "External delegation threshold is OFF."
+                        },
+                        JsonSupport.Options));
+                    return 6;
+                }
+
+                project ??= await services.Projects.AddAsync(workspace, cancellationToken);
+                if (project.TrustedAt is null)
+                {
+                    var accepted = !args.Contains("--no-trust-prompt", StringComparer.OrdinalIgnoreCase) &&
+                                   RequestWorkspaceTrust(project.Path);
+                    if (!accepted)
+                    {
+                        Console.WriteLine(JsonSerializer.Serialize(
+                            new
+                            {
+                                status = "trustRequired",
+                                projectId = project.Id,
+                                workspace = project.Path,
+                                detail = "No repository transport was created and agy.exe was not started."
+                            },
+                            JsonSupport.Options));
+                        return 5;
+                    }
+                    project = await services.Projects.TrustAsync(project.Id, cancellationToken);
+                }
+
                 var taskPath = Option(args, "--task")
                     ?? throw new ArgumentException("--task <file> is required.");
                 var title = Option(args, "--title") ?? Path.GetFileNameWithoutExtension(taskPath);
                 var instructions = await File.ReadAllTextAsync(taskPath, cancellationToken);
                 var gates = Options(args, "--gate");
                 var missionId = Option(args, "--mission");
+                await services.Activity.SetAsync(
+                    project,
+                    SolActivityPhase.Delegating,
+                    $"Sol передаёт Flash ограниченную задачу: {title}.",
+                    missionId,
+                    cancellationToken: cancellationToken);
                 var handoff = await services.Protocol.PublishAsync(
                     project.Path, new MissionRequest(title, instructions, gates, missionId), cancellationToken);
+                await services.Activity.SetAsync(
+                    project,
+                    SolActivityPhase.Delegating,
+                    $"Sol передал Flash ограниченную задачу: {title}.",
+                    handoff.Control.MissionId,
+                    handoff.Control.HandoffId,
+                    cancellationToken: cancellationToken);
                 Console.WriteLine(JsonSerializer.Serialize(handoff.Control, JsonSupport.Options));
                 var result = await services.CreateRunner().RunAsync(
                     project, handoff, services.Doctor.ResolveAgyPath(), cancellationToken);
+                await services.Activity.SetAsync(
+                    project,
+                    result.State == RelayState.ReportReady
+                        ? SolActivityPhase.Reviewing
+                        : SolActivityPhase.Blocked,
+                    result.State == RelayState.ReportReady
+                        ? "Отчёт Flash получен; Sol должен независимо проверить результат."
+                        : result.Detail,
+                    handoff.Control.MissionId,
+                    handoff.Control.HandoffId,
+                    cancellationToken: cancellationToken);
                 Console.WriteLine(JsonSerializer.Serialize(result, JsonSupport.Options));
                 return result.State == RelayState.ReportReady ? 0 : 4;
             default:
                 throw new ArgumentException($"Unknown handoff action: {args[1]}");
         }
     }
+
+    private static bool RequestWorkspaceTrust(string workspace)
+        => System.Windows.MessageBox.Show(
+               $"Разрешить Agent Relay запускать Flash с правом редактирования только в этой папке?\n\n" +
+               $"{workspace}\n\n" +
+               "Будет использован exact executor Antigravity / gemini-3.6-flash-high с accept-edits. " +
+               "Это однократное доверие конкретному workspace и не меняет глобальный порог делегирования.",
+               "Agent Relay — доверие workspace",
+               System.Windows.MessageBoxButton.YesNo,
+               System.Windows.MessageBoxImage.Warning) == System.Windows.MessageBoxResult.Yes;
 
     private static async Task CancelRunnerAsync(
         RelayServices services,
@@ -229,6 +363,8 @@ public static class CommandLine
               policy set off|low|medium|high
               project add|remove|trust <path-or-id>
               project list
+              activity get|clear --project <id|path>
+              activity set --project <id|path> --phase <phase> --summary <text> [--mission <id>] [--handoff <id>]
               handoff publish --project <id|path> --task <file> [--title <text>] [--mission <id>] [--gate <command> ...]
               handoff status --project <id|path>
               handoff cancel --project <id|path>

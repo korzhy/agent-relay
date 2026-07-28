@@ -1,31 +1,43 @@
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 using AgentRelay.Core;
+using AgentRelay.Windows;
 using Forms = System.Windows.Forms;
 
 namespace AgentRelay.App;
 
-public partial class MainWindow : Window, INotifyPropertyChanged
+public partial class MainWindow : Window
 {
+    private static readonly SolidColorBrush ActiveBrush =
+        new((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#6BE3C2"));
+    private static readonly SolidColorBrush IdleBrush =
+        new((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#718096"));
+    private static readonly SolidColorBrush WarningBrush =
+        new((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#F3B860"));
+    private static readonly SolidColorBrush ErrorBrush =
+        new((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#F17878"));
     private readonly RelayServices _services;
-    private readonly DispatcherTimer _timer;
+    private readonly DispatcherTimer _runtimeDebounce;
+    private readonly DispatcherTimer _quotaTimer;
     private readonly Forms.NotifyIcon _trayIcon;
-    private ProjectRow? _selectedProject;
+    private FileSystemWatcher? _runtimeWatcher;
+    private DashboardMission? _currentMission;
+    private bool _loadingPolicy;
     private bool _explicitClose;
-    private DateTimeOffset _lastQuotaRefresh = DateTimeOffset.MinValue;
+    private string? _lastNotifiedReviewPath;
 
     public MainWindow(RelayServices services)
     {
         _services = services;
         InitializeComponent();
-        DataContext = this;
-        DelegationLevelBox.ItemsSource = Enum.GetValues<DelegationLevel>();
+
         _trayIcon = new Forms.NotifyIcon
         {
             Icon = System.Drawing.SystemIcons.Application,
@@ -42,23 +54,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         });
         _trayIcon.ContextMenuStrip = menu;
 
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _timer.Tick += async (_, _) =>
+        _runtimeDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        _runtimeDebounce.Tick += async (_, _) =>
         {
-            await RefreshProjectsAsync();
-            if (DateTimeOffset.UtcNow - _lastQuotaRefresh >= TimeSpan.FromSeconds(30))
-            {
-                await RefreshQuotaAsync();
-            }
+            _runtimeDebounce.Stop();
+            await RefreshDashboardAsync();
         };
-        Loaded += async (_, _) =>
-        {
-            await RunDoctorAsync();
-            await LoadPolicyAsync();
-            await RefreshProjectsAsync();
-            await RefreshQuotaAsync();
-            _timer.Start();
-        };
+        _quotaTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        _quotaTimer.Tick += async (_, _) => await RefreshQuotaAsync();
+
+        Loaded += OnLoaded;
+        Activated += async (_, _) => await RefreshDashboardAsync();
         StateChanged += (_, _) =>
         {
             if (WindowState == WindowState.Minimized)
@@ -69,336 +75,390 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Closing += OnClosing;
     }
 
-    public ObservableCollection<ProjectRow> Projects { get; } = [];
-
-    public ProjectRow? SelectedProject
+    private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        get => _selectedProject;
-        set
-        {
-            _selectedProject = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-
-    private async void Doctor_Click(object sender, RoutedEventArgs e)
-    {
-        await RunDoctorAsync();
+        await LoadPolicyAsync();
+        await RefreshHealthAsync();
         await RefreshQuotaAsync();
+        StartRuntimeWatcher();
+        await RefreshDashboardAsync();
+        _quotaTimer.Start();
     }
 
-    private async void RepairCodex_Click(object sender, RoutedEventArgs e)
+    private async void Threshold_Checked(object sender, RoutedEventArgs e)
     {
-        await GuardAsync(async () =>
-        {
-            await _services.Codex.InstallOrRepairAsync();
-            await RunDoctorAsync();
-            StatusText.Text = "Интеграция Codex установлена идемпотентно.";
-        });
-    }
-
-    private async void ApplyPolicy_Click(object sender, RoutedEventArgs e)
-    {
-        if (DelegationLevelBox.SelectedItem is not DelegationLevel level)
+        if (_loadingPolicy || sender is not System.Windows.Controls.RadioButton { Tag: string levelText } ||
+            !Enum.TryParse<DelegationLevel>(levelText, out var level))
         {
             return;
         }
-        await GuardAsync(async () =>
+
+        try
         {
             await _services.Policy.SetLevelAsync(_services.Paths.CodexPolicyFile, level);
-            StatusText.Text = $"External delegation threshold: {level.ToString().ToUpperInvariant()}.";
-        });
+            SetThresholdDescription(level);
+            StatusText.Text = $"Глобальный порог сохранён: {level.ToString().ToUpperInvariant()}.";
+            await RefreshDashboardAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusText.Text = exception.Message;
+            await LoadPolicyAsync();
+        }
     }
 
-    private async void AddProject_Click(object sender, RoutedEventArgs e)
+    private void Health_Click(object sender, RoutedEventArgs e)
     {
-        using var dialog = new Forms.FolderBrowserDialog
-        {
-            Description = "Выберите Git/workspace проект для Agent Relay",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = false
-        };
-        if (dialog.ShowDialog() != Forms.DialogResult.OK)
-        {
-            return;
-        }
-        await GuardAsync(async () =>
-        {
-            await _services.Projects.AddAsync(dialog.SelectedPath);
-            await RefreshProjectsAsync();
-            StatusText.Text = "Проект зарегистрирован; репозиторий не изменён.";
-        });
+        var window = new DiagnosticsWindow(_services) { Owner = this };
+        window.ShowDialog();
     }
 
-    private async void RemoveProject_Click(object sender, RoutedEventArgs e)
+    private async void ContextAction_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedProject is null)
+        if (_currentMission is null)
         {
+            Health_Click(sender, e);
             return;
         }
-        await GuardAsync(async () =>
-        {
-            await _services.Projects.RemoveAsync(SelectedProject.Id);
-            await RefreshProjectsAsync();
-            StatusText.Text = "Удалена только регистрация; история проекта сохранена.";
-        });
-    }
 
-    private async void Trust_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedProject is null)
+        try
         {
-            return;
-        }
-        var result = System.Windows.MessageBox.Show(
-            $"Вы доверяете workspace:\n{SelectedProject.Path}\n\n" +
-            "Agent Relay сможет запускать agy.exe с `--mode accept-edits --dangerously-skip-permissions` " +
-            "только в этом workspace. Flash сможет изменять файлы без интерактивных подтверждений.",
-            "One-time workspace trust",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
-        if (result != MessageBoxResult.Yes)
-        {
-            return;
-        }
-        await GuardAsync(async () =>
-        {
-            await _services.Projects.TrustAsync(SelectedProject.Id);
-            await RefreshProjectsAsync();
-            StatusText.Text = "One-time trust consent сохранён локально.";
-        });
-    }
-
-    private async void Publish_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedProject is null)
-        {
-            return;
-        }
-        if (!SelectedProject.IsTrusted)
-        {
-            System.Windows.MessageBox.Show(
-                "Сначала требуется явное one-time trust consent для этого workspace.",
-                "Dispatch blocked",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-            return;
-        }
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Выберите текстовый task payload",
-            Filter = "Task files (*.md;*.txt)|*.md;*.txt|All files (*.*)|*.*"
-        };
-        if (dialog.ShowDialog(this) != true)
-        {
-            return;
-        }
-        await GuardAsync(async () =>
-        {
-            var project = await _services.Projects.FindAsync(SelectedProject.Id)
-                ?? throw new InvalidOperationException("Проект больше не зарегистрирован.");
-            var instructions = await File.ReadAllTextAsync(dialog.FileName);
-            var handoff = await _services.Protocol.PublishAsync(
-                project.Path,
-                new MissionRequest(Path.GetFileNameWithoutExtension(dialog.FileName), instructions, []));
-            StatusText.Text = $"Handoff {handoff.Control.HandoffId} опубликован. Запускается exact Flash executor.";
-            await RefreshProjectsAsync();
-            var result = await _services.CreateRunner().RunAsync(
-                project, handoff, _services.Doctor.ResolveAgyPath());
-            await RefreshProjectsAsync();
-            StatusText.Text = result.Detail;
-            if (result.State == RelayState.ReportReady)
+            if (_currentMission.State.State == RelayState.Paused)
             {
-                _trayIcon.ShowBalloonTip(
-                    8000,
-                    "Agent Relay: report ready",
-                    "Validated report is ready. Copy the exact review prompt into the open Codex task.",
-                    Forms.ToolTipIcon.Info);
+                await _services.Runtime.SetPausedAsync(
+                    _currentMission.Project, false, new SystemClock());
             }
-        });
-    }
-
-    private async void Pause_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedProject is null)
-        {
-            return;
-        }
-        await GuardAsync(async () =>
-        {
-            var project = await _services.Projects.FindAsync(SelectedProject.Id)
-                ?? throw new InvalidOperationException("Проект не найден.");
-            await _services.Runtime.SetPausedAsync(project, true, new SystemClock());
-            await RefreshProjectsAsync();
-        });
-    }
-
-    private async void Resume_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedProject is null)
-        {
-            return;
-        }
-        await GuardAsync(async () =>
-        {
-            var project = await _services.Projects.FindAsync(SelectedProject.Id)
-                ?? throw new InvalidOperationException("Проект не найден.");
-            await _services.Runtime.SetPausedAsync(project, false, new SystemClock());
-            await RefreshProjectsAsync();
-            StatusText.Text = "Dispatch снова разрешён; прерванная миссия не перезапускается скрыто.";
-        });
-    }
-
-    private void OpenLogs_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedProject is null)
-        {
-            return;
-        }
-        var path = _services.Runtime.ProjectLogDirectory(SelectedProject.Id);
-        Directory.CreateDirectory(path);
-        Process.Start(new ProcessStartInfo("explorer.exe", path) { UseShellExecute = true });
-    }
-
-    private async void CopyReviewPrompt_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedProject is null)
-        {
-            return;
-        }
-        await GuardAsync(async () =>
-        {
-            var state = await _services.Runtime.ReadAsync(SelectedProject.Id);
-            var reviewPromptPath = state?.ReviewPromptPath;
-            if (string.IsNullOrWhiteSpace(reviewPromptPath) ||
-                !File.Exists(reviewPromptPath))
+            else if (_currentMission.State.State == RelayState.ReportReady &&
+                     _currentMission.Delivery is { Succeeded: false } &&
+                     !string.IsNullOrWhiteSpace(_currentMission.State.ReviewPromptPath))
             {
-                throw new InvalidOperationException("Review prompt ещё не готов.");
+                var review = await ReadReviewEnvelopeAsync(_currentMission.Project);
+                if (review?.ReviewAttemptId is null)
+                {
+                    throw new InvalidDataException("Review envelope is unavailable.");
+                }
+                await _services.Delivery.DeliverAsync(
+                    _currentMission.Project,
+                    review.ReviewAttemptId,
+                    _currentMission.State.ReviewPromptPath);
             }
-            var prompt = await File.ReadAllTextAsync(reviewPromptPath);
-            System.Windows.Clipboard.SetText(prompt);
-            StatusText.Text = "Точный review prompt скопирован. Codex не запускался скрыто.";
-        });
-    }
-
-    private async void ProjectsGrid_SelectionChanged(
-        object sender,
-        System.Windows.Controls.SelectionChangedEventArgs e)
-        => await RefreshActionLogAsync();
-
-    private async Task RunDoctorAsync()
-    {
-        DoctorSummary.Text = "Проверка...";
-        var report = await _services.Doctor.RunAsync();
-        DoctorSummary.Text = string.Join(
-            Environment.NewLine,
-            report.Checks.Select(check => $"{(check.Ready ? "✓" : "✕")} {check.Name}: {check.Detail}"));
+            else
+            {
+                Health_Click(sender, e);
+                return;
+            }
+            await RefreshDashboardAsync();
+        }
+        catch (Exception exception)
+        {
+            StatusText.Text = exception.Message;
+        }
     }
 
     private async Task LoadPolicyAsync()
     {
         var policy = await _services.Policy.GetAsync(_services.Paths.CodexPolicyFile);
-        DelegationLevelBox.SelectedItem = policy.Level;
+        _loadingPolicy = true;
+        ThresholdOff.IsChecked = policy.Level == DelegationLevel.Off;
+        ThresholdLow.IsChecked = policy.Level == DelegationLevel.Low;
+        ThresholdMedium.IsChecked = policy.Level == DelegationLevel.Medium;
+        ThresholdHigh.IsChecked = policy.Level == DelegationLevel.High;
+        _loadingPolicy = false;
+        SetThresholdDescription(policy.Level);
+    }
+
+    private void SetThresholdDescription(DelegationLevel level)
+    {
+        ThresholdDescription.Text = level switch
+        {
+            DelegationLevel.Off => "Flash запрещён. Sol выполняет работу самостоятельно.",
+            DelegationLevel.Low => "Только очевидная механическая работа с крупной ожидаемой экономией.",
+            DelegationLevel.Medium => "Сбалансированная передача ограниченных и локально проверяемых задач.",
+            DelegationLevel.High => "Максимум подходящей работы передаётся Flash; финальная проверка остаётся у Sol.",
+            _ => string.Empty
+        };
+    }
+
+    private async Task RefreshHealthAsync()
+    {
+        var doctor = await _services.Doctor.RunAsync();
+        HealthButton.Content = doctor.Ready ? "●  Relay готов" : "●  Требуется настройка";
+        HealthButton.Foreground = doctor.Ready ? ActiveBrush : WarningBrush;
+        HealthButton.ToolTip = string.Join(
+            Environment.NewLine,
+            doctor.Checks.Select(check => $"{(check.Ready ? "✓" : "✕")} {check.Name}: {check.Detail}"));
     }
 
     private async Task RefreshQuotaAsync()
     {
-        _lastQuotaRefresh = DateTimeOffset.UtcNow;
-        var snapshot = await _services.Quota.ReadAsync();
-        if (snapshot.RemainingPercentage is not int remaining)
+        var quota = await _services.Quota.ReadAsync();
+        if (quota.Freshness == QuotaFreshness.Fresh && quota.RemainingPercentage is int remaining)
         {
-            QuotaSummary.Text = $"N/A — {snapshot.Detail}";
-            QuotaProgress.Visibility = Visibility.Collapsed;
-            return;
+            QuotaText.Text = $"Квота: {remaining}%";
+            QuotaText.Foreground = remaining <= 10 ? WarningBrush : ActiveBrush;
         }
-
-        QuotaSummary.Text = snapshot.Freshness == AgentRelay.Windows.QuotaFreshness.Stale
-            ? $"{remaining}% осталось · устаревшее значение · {snapshot.ObservedAt:yyyy-MM-dd HH:mm} UTC"
-            : $"{remaining}% осталось · обновлено {snapshot.ObservedAt:HH:mm:ss} UTC";
-        QuotaProgress.Value = remaining;
-        QuotaProgress.Visibility = Visibility.Visible;
-        QuotaProgress.ToolTip = snapshot.Detail;
+        else
+        {
+            QuotaText.Text = "Квота: нет свежих данных";
+            QuotaText.Foreground = IdleBrush;
+        }
+        QuotaChip.ToolTip = quota.RemainingPercentage is int lastKnown
+            ? $"{quota.Source}\nПоследний известный снимок: {lastKnown}% · {quota.ObservedAt:yyyy-MM-dd HH:mm} UTC\n{quota.Detail}"
+            : $"{quota.Source}\n{quota.Detail}";
     }
 
-    private async Task RefreshProjectsAsync()
+    private async Task RefreshDashboardAsync()
     {
-        var selection = SelectedProject?.Id;
         var projects = await _services.Projects.ListAsync();
-        var rows = new List<ProjectRow>();
+        var states = new List<(RegisteredProject Project, ProjectRuntimeState State)>();
         foreach (var project in projects)
         {
-            var state = await _services.Recovery.RecoverAsync(project);
-            rows.Add(new ProjectRow(
-                project.Id,
-                project.Name,
-                project.Path,
-                project.TrustedAt is not null,
-                state.State,
-                state.Detail ?? string.Empty));
+            states.Add((project, await _services.Recovery.RecoverAsync(project)));
         }
-        Projects.Clear();
-        foreach (var row in rows)
-        {
-            Projects.Add(row);
-        }
-        SelectedProject = Projects.FirstOrDefault(item => item.Id == selection) ?? Projects.FirstOrDefault();
-        await RefreshActionLogAsync();
-    }
 
-    private async Task RefreshActionLogAsync()
-    {
-        if (SelectedProject is null)
+        var selected = MissionSelector.Select(states.Select(item =>
+            new MissionCandidate(item.Project.Id, item.State.State, item.State.UpdatedAt)));
+        if (selected is null)
         {
-            ActionLogBox.Text = string.Empty;
-            return;
-        }
-        var path = Path.Combine(
-            _services.Runtime.ProjectLogDirectory(SelectedProject.Id), "actions.jsonl");
-        if (!File.Exists(path))
-        {
-            ActionLogBox.Text = "Нет действий.";
+            _currentMission = null;
+            RenderEmpty();
             return;
         }
 
-        var lines = await File.ReadAllLinesAsync(path);
-        var recent = new List<string>();
-        foreach (var line in lines.TakeLast(12))
-        {
-            try
-            {
-                var entry = JsonSerializer.Deserialize<AgentRelay.Windows.ActionLogEntry>(
-                    line, JsonSupport.Options);
-                if (entry is not null)
-                {
-                    recent.Add(
-                        $"{entry.Timestamp:HH:mm:ss}  {entry.Action,-10} {entry.Detail}" +
-                        (entry.ExitCode is null ? string.Empty : $" [exit {entry.ExitCode}]"));
-                }
-            }
-            catch (JsonException)
-            {
-                recent.Add("invalid log record");
-            }
-        }
-        ActionLogBox.Text = string.Join(Environment.NewLine, recent);
-        ActionLogBox.ScrollToEnd();
+        var pair = states.Single(item => item.Project.Id == selected.ProjectId);
+        var activity = await ReadActivitySafelyAsync(pair.Project.Id);
+        var delivery = await ReadDeliverySafelyAsync(pair.Project.Id);
+        var log = await _services.Runtime.ReadLogAsync(pair.Project.Id, 1);
+        var title = await ReadMissionTitleAsync(pair.Project, pair.State);
+        _currentMission = new DashboardMission(
+            pair.Project,
+            pair.State,
+            activity,
+            delivery,
+            log.Entries.LastOrDefault(),
+            title);
+        RenderMission(_currentMission);
     }
 
-    private async Task GuardAsync(Func<Task> action)
+    private async Task<SolActivity?> ReadActivitySafelyAsync(string projectId)
     {
         try
         {
-            await action();
+            return await _services.Activity.GetAsync(projectId);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (
+            exception is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
         {
-            StatusText.Text = exception.Message;
-            System.Windows.MessageBox.Show(
-                exception.Message, "Agent Relay", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Локальный статус Sol повреждён; подробности доступны в диагностике.";
+            return null;
         }
     }
+
+    private async Task<ReviewDeliveryState?> ReadDeliverySafelyAsync(string projectId)
+    {
+        try
+        {
+            return await _services.Delivery.GetAsync(projectId);
+        }
+        catch (Exception exception) when (
+            exception is IOException or JsonException or UnauthorizedAccessException)
+        {
+            StatusText.Text = "История доставки review prompt повреждена; подробности доступны в диагностике.";
+            return null;
+        }
+    }
+
+    private void RenderEmpty()
+    {
+        MissionTitleText.Text = "Нет активной делегации";
+        MissionMetaText.Text = "Sol использует Flash только когда порог и задача это оправдывают.";
+        SolStatusText.Text = ThresholdOff.IsChecked == true
+            ? "Делегирование выключено"
+            : "Статус не подтверждён";
+        SolDetailText.Text = ThresholdOff.IsChecked == true
+            ? "Глобальный порог OFF: Flash не будет запущен."
+            : "Нет явной операционной фазы от текущей задачи Codex.";
+        SolAgeText.Text = string.Empty;
+        FlashStatusText.Text = "Не задействован";
+        FlashDetailText.Text = "Нет активного внешнего runner.";
+        FlashAgeText.Text = string.Empty;
+        SolDot.Fill = IdleBrush;
+        FlashDot.Fill = IdleBrush;
+        LastActionText.Text = "Без hidden reasoning · только подтверждённые действия";
+        ContextPanel.Visibility = Visibility.Collapsed;
+        SetCurrentStep(0);
+    }
+
+    private void RenderMission(DashboardMission mission)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var liveRunner = mission.State.State is RelayState.Running or RelayState.Waiting;
+        var activityFresh = mission.Activity?.IsFresh(now) == true || liveRunner;
+        MissionTitleText.Text = mission.Title;
+        MissionMetaText.Text =
+            $"{mission.Project.Name} · mission {Short(mission.State.MissionId)} · обновлено {FormatAge(mission.State.UpdatedAt, now)}";
+
+        if (mission.Activity is not null)
+        {
+            SolStatusText.Text = SolPhaseLabel(mission.Activity.Phase, activityFresh);
+            SolDetailText.Text = mission.Activity.Summary;
+            SolAgeText.Text = activityFresh
+                ? $"Подтверждено {FormatAge(mission.Activity.UpdatedAt, now)}"
+                : $"Последняя подтверждённая фаза · {FormatAge(mission.Activity.UpdatedAt, now)}";
+            SolDot.Fill = activityFresh ? ActiveBrush : IdleBrush;
+        }
+        else
+        {
+            SolStatusText.Text = mission.State.State == RelayState.ReportReady
+                ? "Ожидается проверка Sol"
+                : liveRunner
+                    ? "Ожидает отчёт Flash"
+                    : "Статус не подтверждён";
+            SolDetailText.Text = liveRunner
+                ? "Sol передал ограниченную задачу и ожидает структурированный отчёт."
+                : "Нет свежей явной операционной фазы Sol.";
+            SolAgeText.Text = string.Empty;
+            SolDot.Fill = liveRunner ? ActiveBrush : IdleBrush;
+        }
+
+        (FlashStatusText.Text, FlashDetailText.Text, FlashDot.Fill) = mission.State.State switch
+        {
+            RelayState.Running => ("Выполняет задачу", $"Сейчас выполняет: {mission.Title}", ActiveBrush),
+            RelayState.Waiting => ("Ожидает изменения", "Runner ожидает подтверждённое файловое или process-output событие.", WarningBrush),
+            RelayState.ReportReady => ("Отчёт готов", "Валидный отчёт готов к независимой проверке Sol.", ActiveBrush),
+            RelayState.Stalled => ("Остановлен", "Runner остановился без валидного завершения. Подробности доступны в диагностике.", ErrorBrush),
+            RelayState.QuotaExhausted => ("Квота исчерпана", "Исчерпание подтверждено фактическим выводом runner.", ErrorBrush),
+            RelayState.Paused => ("Пауза", "Внешнее выполнение приостановлено.", WarningBrush),
+            _ => ("Не задействован", "Нет активного внешнего runner.", IdleBrush)
+        };
+        FlashAgeText.Text = $"Состояние подтверждено {FormatAge(mission.State.UpdatedAt, now)}";
+
+        var step = mission.Activity?.Phase switch
+        {
+            SolActivityPhase.Reviewing => 4,
+            SolActivityPhase.Integrating or SolActivityPhase.Completed => 5,
+            _ => mission.State.State switch
+            {
+                RelayState.Running or RelayState.Waiting => 2,
+                RelayState.ReportReady => 3,
+                _ => 1
+            }
+        };
+        SetCurrentStep(step);
+        LastActionText.Text = mission.LastAction is null
+            ? "Без hidden reasoning · подтверждённых действий пока нет"
+            : $"Последнее действие: {FormatLastAction(mission.LastAction, mission.State.State)}";
+        RenderContext(mission);
+
+        if (mission.State.State == RelayState.ReportReady &&
+            !string.IsNullOrWhiteSpace(mission.State.ReviewPromptPath) &&
+            !string.Equals(_lastNotifiedReviewPath, mission.State.ReviewPromptPath, StringComparison.OrdinalIgnoreCase))
+        {
+            _lastNotifiedReviewPath = mission.State.ReviewPromptPath;
+            _trayIcon.ShowBalloonTip(
+                8000,
+                "Agent Relay: отчёт готов",
+                mission.Delivery?.Succeeded == true
+                    ? "Точный review prompt автоматически скопирован."
+                    : "Отчёт готов; требуется проверка Sol.",
+                Forms.ToolTipIcon.Info);
+        }
+    }
+
+    private void RenderContext(DashboardMission mission)
+    {
+        ContextPanel.Visibility = Visibility.Collapsed;
+        if (mission.State.State == RelayState.Paused)
+        {
+            ContextText.Text = "Внешнее выполнение приостановлено. Прерванная миссия не перезапускается скрыто.";
+            ContextActionButton.Content = "Resume";
+            ContextPanel.Visibility = Visibility.Visible;
+        }
+        else if (mission.State.State is RelayState.Stalled or RelayState.QuotaExhausted)
+        {
+            ContextText.Text = mission.State.Detail ?? "Внешний runner требует внимания.";
+            ContextActionButton.Content = "Диагностика";
+            ContextPanel.Visibility = Visibility.Visible;
+        }
+        else if (mission.State.State == RelayState.ReportReady &&
+                 mission.Delivery is { Succeeded: false })
+        {
+            ContextText.Text = $"Отчёт валиден, но clipboard недоступен: {mission.Delivery.Error}";
+            ContextActionButton.Content = "Копировать снова";
+            ContextPanel.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void SetCurrentStep(int current)
+    {
+        var steps = new[] { DecisionStep, FlashStep, ReportStep, ReviewStep, IntegrateStep };
+        for (var index = 0; index < steps.Length; index++)
+        {
+            steps[index].Foreground = index + 1 == current ? ActiveBrush : IdleBrush;
+            steps[index].FontWeight = index + 1 == current ? FontWeights.Bold : FontWeights.Normal;
+        }
+    }
+
+    private async Task<string> ReadMissionTitleAsync(
+        RegisteredProject project,
+        ProjectRuntimeState state)
+    {
+        if (string.IsNullOrWhiteSpace(state.HandoffId))
+        {
+            return $"Последняя работа · {project.Name}";
+        }
+        try
+        {
+            var controlPath = Path.Combine(project.Path, AgentRelayConstants.TransportDirectory, "control.json");
+            var control = await _services.Files.ReadJsonAsync<ControlEnvelope>(controlPath);
+            if (control is null ||
+                !string.Equals(control.HandoffId, state.HandoffId, StringComparison.Ordinal))
+            {
+                return $"Hand-off {Short(state.HandoffId)}";
+            }
+            var taskPath = WorkspaceSafety.ResolveRelative(project.Path, control.Task.Path);
+            var hash = await AtomicFileStore.Sha256Async(taskPath);
+            if (!string.Equals(hash, control.Task.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Hand-off {Short(state.HandoffId)}";
+            }
+            var task = await _services.Files.ReadJsonAsync<TaskPayload>(taskPath);
+            return string.IsNullOrWhiteSpace(task?.Title) ? $"Hand-off {Short(state.HandoffId)}" : task.Title;
+        }
+        catch (Exception exception) when (
+            exception is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
+        {
+            return $"Hand-off {Short(state.HandoffId)}";
+        }
+    }
+
+    private Task<ReviewEnvelope?> ReadReviewEnvelopeAsync(RegisteredProject project)
+        => _services.Files.ReadJsonAsync<ReviewEnvelope>(
+            Path.Combine(project.Path, AgentRelayConstants.TransportDirectory, "review.json"));
+
+    private void StartRuntimeWatcher()
+    {
+        Directory.CreateDirectory(_services.Paths.RuntimeDirectory);
+        _runtimeWatcher = new FileSystemWatcher(_services.Paths.RuntimeDirectory, "*.json")
+        {
+            IncludeSubdirectories = true,
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+        };
+        FileSystemEventHandler changed = (_, _) => QueueRuntimeRefresh();
+        RenamedEventHandler renamed = (_, _) => QueueRuntimeRefresh();
+        _runtimeWatcher.Changed += changed;
+        _runtimeWatcher.Created += changed;
+        _runtimeWatcher.Deleted += changed;
+        _runtimeWatcher.Renamed += renamed;
+        _runtimeWatcher.EnableRaisingEvents = true;
+    }
+
+    private void QueueRuntimeRefresh()
+        => Dispatcher.BeginInvoke(() =>
+        {
+            _runtimeDebounce.Stop();
+            _runtimeDebounce.Start();
+        });
 
     private void ShowFromTray()
     {
@@ -417,24 +477,70 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 3000, "Agent Relay", "Agent Relay продолжает мониторинг в tray.", Forms.ToolTipIcon.Info);
             return;
         }
-        _timer.Stop();
+        _quotaTimer.Stop();
+        _runtimeDebounce.Stop();
+        _runtimeWatcher?.Dispose();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         System.Windows.Application.Current.Shutdown();
     }
 
-    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
-        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-}
+    private static string SolPhaseLabel(SolActivityPhase phase, bool fresh)
+    {
+        var label = phase switch
+        {
+            SolActivityPhase.Evaluating => "Оценивает делегирование",
+            SolActivityPhase.Delegating => "Передаёт задачу",
+            SolActivityPhase.WaitingForFlash => "Ожидает отчёт Flash",
+            SolActivityPhase.Working => "Выполняет свою часть",
+            SolActivityPhase.Reviewing => "Проверяет результат",
+            SolActivityPhase.Integrating => "Интегрирует изменения",
+            SolActivityPhase.Completed => "Работа завершена",
+            SolActivityPhase.Blocked => "Требуется внимание",
+            _ => "Статус не подтверждён"
+        };
+        return fresh ? label : $"Последняя фаза: {label}";
+    }
 
-public sealed record ProjectRow(
-    string Id,
-    string Name,
-    string Path,
-    bool IsTrusted,
-    RelayState RelayState,
-    string Detail)
-{
-    public string Trust => IsTrusted ? "trusted" : "blocked";
-    public string State => RelayState.ToString().ToLowerInvariant();
+    private static string FormatLastAction(ActionLogEntry action, RelayState state)
+        => action.Action switch
+        {
+            "dispatch" => "Flash запущен с exact model.",
+            "complete" when state == RelayState.ReportReady => "Валидный отчёт Flash принят.",
+            "complete" => "Внешнее выполнение завершилось без принятого отчёта.",
+            "prompt-copy" => "Точный review prompt скопирован.",
+            "prompt-copy-failed" => "Clipboard временно недоступен.",
+            "pause" => "Будущие dispatch приостановлены.",
+            "resume" => "Будущие dispatch снова разрешены.",
+            _ => $"{action.Action} · {action.Detail}"
+        };
+
+    private static string FormatAge(DateTimeOffset timestamp, DateTimeOffset now)
+    {
+        var age = now - timestamp;
+        if (age < TimeSpan.Zero)
+        {
+            return "только что";
+        }
+        if (age < TimeSpan.FromMinutes(1))
+        {
+            return $"{Math.Max(1, (int)age.TotalSeconds)} сек. назад";
+        }
+        if (age < TimeSpan.FromHours(1))
+        {
+            return $"{(int)age.TotalMinutes} мин. назад";
+        }
+        return timestamp.ToLocalTime().ToString("dd.MM HH:mm");
+    }
+
+    private static string Short(string? id)
+        => string.IsNullOrWhiteSpace(id) ? "—" : id[..Math.Min(8, id.Length)];
+
+    private sealed record DashboardMission(
+        RegisteredProject Project,
+        ProjectRuntimeState State,
+        SolActivity? Activity,
+        ReviewDeliveryState? Delivery,
+        ActionLogEntry? LastAction,
+        string Title);
 }
