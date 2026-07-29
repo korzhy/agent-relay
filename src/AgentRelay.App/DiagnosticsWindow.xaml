@@ -1,7 +1,7 @@
 <Window x:Class="AgentRelay.App.DiagnosticsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Agent Relay — диагностика" Height="560" Width="760"
+        Title="Agent Relay — диагностика" Height="650" Width="780"
         Background="{StaticResource SurfaceBrush}" Foreground="#E8EDF5"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
     <Grid Margin="24">
@@ -31,6 +31,18 @@
                                    Foreground="#B8C4D6" Margin="0,8,0,0"/>
                     </StackPanel>
                 </Border>
+                <Border Background="{StaticResource CardBrush}" CornerRadius="10" Padding="16" Margin="0,0,0,12">
+                    <StackPanel>
+                        <DockPanel>
+                            <CheckBox x:Name="AutoUpdateCheckBox" DockPanel.Dock="Right"
+                                      Content="Включено" Click="AutoUpdate_Click"
+                                      Foreground="#E8EDF5" VerticalAlignment="Center"/>
+                            <TextBlock Text="Автообновление" FontSize="16" FontWeight="SemiBold"/>
+                        </DockPanel>
+                        <TextBlock x:Name="UpdateText" Text="Проверка…" TextWrapping="Wrap"
+                                   Foreground="#B8C4D6" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
                 <Border Background="{StaticResource CardBrush}" CornerRadius="10" Padding="16">
                     <StackPanel>
                         <TextBlock Text="Журналы" FontSize="16" FontWeight="SemiBold"/>
@@ -43,6 +55,7 @@
         <DockPanel Grid.Row="2" Margin="0,16,0,0">
             <Button Content="Закрыть" DockPanel.Dock="Right" Click="Close_Click" Padding="18,9"/>
             <Button Content="Обновить" Click="Refresh_Click" Margin="0,0,8,0"/>
+            <Button Content="Проверить обновление" Click="CheckUpdate_Click" Margin="0,0,8,0"/>
             <Button Content="Восстановить интеграцию Codex" Click="Repair_Click" Margin="0,0,8,0"/>
             <Button Content="Открыть папку данных" Click="OpenData_Click"/>
         </DockPanel>

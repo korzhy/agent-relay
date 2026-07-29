@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using AgentRelay.Core;
 using AgentRelay.Windows;
 
@@ -18,7 +19,8 @@ public sealed class RelayServices
         RuntimeRecoveryService recovery,
         DoctorService doctor,
         CodexIntegrationService codex,
-        AntigravityQuotaService quota)
+        AntigravityQuotaService quota,
+        UpdateService updates)
     {
         Paths = paths;
         Files = files;
@@ -32,6 +34,7 @@ public sealed class RelayServices
         Doctor = doctor;
         Codex = codex;
         Quota = quota;
+        Updates = updates;
     }
 
     public AppPaths Paths { get; }
@@ -46,6 +49,7 @@ public sealed class RelayServices
     public DoctorService Doctor { get; }
     public CodexIntegrationService Codex { get; }
     public AntigravityQuotaService Quota { get; }
+    public UpdateService Updates { get; }
 
     public static RelayServices Create()
     {
@@ -61,7 +65,10 @@ public sealed class RelayServices
         AppPaths paths,
         string skillSource,
         IClipboardWriter clipboard,
-        IClock? clock = null)
+        IClock? clock = null,
+        HttpClient? updateHttp = null,
+        IUpdateInstallerLauncher? updateLauncher = null,
+        string? currentVersion = null)
     {
         var files = new AtomicFileStore();
         clock ??= new SystemClock();
@@ -85,9 +92,28 @@ public sealed class RelayServices
                 files,
                 skillSource,
                 clock),
-            AntigravityQuotaService.FromEnvironment(clock));
+            AntigravityQuotaService.FromEnvironment(clock),
+            new UpdateService(
+                paths,
+                files,
+                updateHttp ?? CreateUpdateHttpClient(),
+                currentVersion ?? AppVersion.Current,
+                updateLauncher,
+                clock));
     }
 
     public AgyRunner CreateRunner(RunnerOptions? options = null)
         => new(Protocol, Runtime, new SystemClock(), options, Activity, Delivery);
+
+    private static HttpClient CreateUpdateHttpClient()
+    {
+        var client = new HttpClient(new SocketsHttpHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.All,
+            AllowAutoRedirect = true,
+            MaxAutomaticRedirections = 5
+        });
+        client.Timeout = TimeSpan.FromMinutes(5);
+        return client;
+    }
 }

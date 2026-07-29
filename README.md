@@ -7,7 +7,8 @@ exact review prompt for the already-open Codex task. It never starts
 `codex.exe` in the background.
 
 MVP target: Windows 10/11 x64, .NET 8 WPF, self-contained per-user install.
-There is no backend, account, telemetry, secret storage, or auto-update.
+There is no backend, account, telemetry, or secret storage. Stable releases
+can update automatically from this repository's GitHub Releases.
 
 ## Two settings that must not be confused
 
@@ -41,7 +42,8 @@ Agent Relay fails closed if `agy models` does not list that exact model.
    and final integration.
 
 Autostart is off by default. Closing the window minimizes to the tray; use the
-tray menu to exit.
+tray menu to exit. Auto-update is enabled by default and runs while Relay is
+open or in the tray.
 
 ## Install on a second PC
 
@@ -50,6 +52,10 @@ the target user. Install Codex App and Antigravity separately, sign in to them
 through their normal UIs, and confirm `agy models` lists
 `gemini-3.6-flash-high`. Then run Agent Relay Doctor and **Install / repair
 Codex integration**.
+
+Version `0.2.0` and older cannot update themselves. Install `0.3.0` once on
+each PC; all later stable releases can then update automatically when Relay is
+next running.
 
 The internal workspace binding and trust are deliberately machine-local and
 must be repeated. There is no project-registration workflow in the normal GUI;
@@ -80,6 +86,10 @@ AgentRelay.exe handoff status --project <id-or-path>
 AgentRelay.exe handoff cancel --project <id-or-path>
 AgentRelay.exe handoff resume --project <id-or-path>
 AgentRelay.exe codex install|repair|remove
+AgentRelay.exe update status
+AgentRelay.exe update check
+AgentRelay.exe update set on|off
+AgentRelay.exe update apply
 ```
 
 The `project` commands are diagnostic/compatibility interfaces, not the normal
@@ -89,6 +99,36 @@ start the exact Flash executor in that workspace using
 profile root, Windows, Program Files, ProgramData, and system directories are
 rejected. `resume` in the GUI re-enables future dispatch; it never silently
 replays an interrupted mission.
+
+## Automatic updates
+
+Relay checks `https://api.github.com/repos/korzhy/agent-relay/releases/latest`
+at startup and no more often than every six hours. Only a stable tag in exact
+`vMAJOR.MINOR.PATCH` form is accepted. The release must contain exactly one
+`AgentRelaySetup-x64.exe` and one `AgentRelaySetup-x64.exe.sha256`.
+
+The updater:
+
+- accepts download URLs only from this repository over HTTPS;
+- requires GitHub's SHA-256 asset digest and the published checksum to agree;
+- streams to an app-owned `.partial` file with a 200 MB limit;
+- verifies length and SHA-256 before publication and again before execution;
+- refuses downgrade or same-version reinstall;
+- defers installation while any Flash runner is live;
+- runs the existing per-user Inno Setup installer silently, closes Relay
+  cleanly, repairs the managed Codex integration idempotently, and relaunches
+  Relay.
+
+Settings and update state are stored under
+`%LOCALAPPDATA%\AgentRelay\updates`. If Relay is not running, nothing runs in
+the background; the update is applied the next time Relay starts. Diagnostics
+and `update set off` can disable automatic updates.
+
+To release from another trusted PC, push the tested commit to `main`, create
+and push a `vMAJOR.MINOR.PATCH` tag, and wait for the tagged GitHub Actions
+workflow. The workflow tests, publishes, compiles the installer, writes the
+checksum, and creates the stable GitHub Release. Installed Relay instances
+will discover it without any machine-specific coordination.
 
 ## Protocol and state
 
@@ -137,6 +177,9 @@ are untrusted inputs. Controls include:
 - durable pause/cancel state, process identity checks, and one project mutex;
 - logs of actions, tools, commands, exit codes, and errors only—never hidden
   model reasoning;
+- stable updates pinned to `korzhy/agent-relay`, with exact asset names,
+  HTTPS URL restrictions, GitHub asset digest, published SHA-256, size limits,
+  no downgrade, and a second hash check immediately before execution;
 - no secret storage, telemetry, backend, deploy, push, production access, or
   irreversible-action authority;
 - Codex remains responsible for architecture, security, deterministic
@@ -173,20 +216,24 @@ owned skill. It restores a pre-existing skill/policy backup when safe, deletes
 an app-created policy only if its hash is still unchanged, and leaves a
 user-modified policy in place. Internal workspace bindings, logs, trust decisions,
 and project `.agent-relay` history are preserved by default under
-`%LOCALAPPDATA%\AgentRelay` and in the project.
+`%LOCALAPPDATA%\AgentRelay` and in the project. Downloaded update packages,
+update state, and update settings are app-owned and are removed.
 
 ## MVP limitations
 
 - Windows 10/11 x64 only.
 - One local executor and one active mission per project.
-- No auto-update, cloud sync, or remote management.
+- No cloud sync or remote management.
 - Quota percentage is last-observed general prompt-credit capacity, not a
   model-specific reservation or dispatch guarantee.
 - Review hand-off is assisted: the prompt is copied once but never pasted,
   submitted, or used to launch Codex secretly.
 - Repository transport history cleanup/retention is manual.
-- The installer is unsigned until a future public release pipeline is supplied
-  a code-signing identity.
+- The installer is not Authenticode-signed. SHA-256 protects integrity in
+  transit and detects release inconsistencies, but it does not protect against
+  compromise of the GitHub repository or its release workflow. Protect
+  maintainer accounts with MFA and keep branch/tag protections enabled; add a
+  code-signing identity before treating updates as enterprise-grade.
 
 ## License
 

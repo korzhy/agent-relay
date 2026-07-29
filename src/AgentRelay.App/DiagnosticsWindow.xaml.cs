@@ -8,6 +8,7 @@ namespace AgentRelay.App;
 public partial class DiagnosticsWindow : Window
 {
     private readonly RelayServices _services;
+    private bool _loadingUpdateSettings;
 
     public DiagnosticsWindow(RelayServices services)
     {
@@ -24,6 +25,38 @@ public partial class DiagnosticsWindow : Window
         try
         {
             await _services.Codex.InstallOrRepairAsync();
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            System.Windows.MessageBox.Show(
+                exception.Message, "Agent Relay", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _services.Updates.CheckAsync(true);
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            System.Windows.MessageBox.Show(
+                exception.Message, "Agent Relay", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void AutoUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_loadingUpdateSettings)
+        {
+            return;
+        }
+        try
+        {
+            await _services.Updates.SetEnabledAsync(AutoUpdateCheckBox.IsChecked == true);
             await RefreshAsync();
         }
         catch (Exception exception)
@@ -59,6 +92,16 @@ public partial class DiagnosticsWindow : Window
                 ? $"Нет свежих данных. Последний снимок: {lastKnown}% от {quota.ObservedAt:yyyy-MM-dd HH:mm} UTC.\n" +
                   $"{quota.Detail}\nИсточник: {quota.Source}"
                 : $"Данные недоступны.\n{quota.Detail}\nИсточник: {quota.Source}";
+
+        var updateSettings = await _services.Updates.GetSettingsAsync();
+        var updateState = await _services.Updates.GetStateAsync();
+        _loadingUpdateSettings = true;
+        AutoUpdateCheckBox.IsChecked = updateSettings.Enabled;
+        _loadingUpdateSettings = false;
+        UpdateText.Text =
+            $"Установлено: {_services.Updates.CurrentVersion}. " +
+            $"Проверка каждые {updateSettings.CheckIntervalHours} ч.\n" +
+            (updateState?.Detail ?? "Проверка GitHub Releases ещё не выполнялась.");
 
         var invalid = 0;
         var incomplete = 0;

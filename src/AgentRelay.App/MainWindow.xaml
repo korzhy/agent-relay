@@ -160,8 +160,8 @@
 
         <Grid Grid.Row="3" Margin="0,14,0,0">
             <TextBlock x:Name="StatusText" Foreground="#91A0B5" Text="Готово."/>
-            <TextBlock HorizontalAlignment="Right" Foreground="#627086"
-                       Text="Без телеметрии · без backend · autostart выключен"/>
+            <TextBlock x:Name="UpdateFooterText" HorizontalAlignment="Right" Foreground="#627086"
+                       Text="Автообновление включено · autostart выключен"/>
         </Grid>
     </Grid>
 </Window>

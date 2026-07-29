@@ -1,6 +1,6 @@
 #define MyAppName "Agent Relay"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.0"
+  #define MyAppVersion "0.3.0"
 #endif
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish"
@@ -33,6 +33,7 @@ VersionInfoCompany=Agent Relay contributors
 LicenseFile=..\LICENSE
 SetupLogging=yes
 CloseApplications=force
+CloseApplicationsFilter=AgentRelay.exe
 RestartApplications=no
 
 [Languages]
@@ -51,10 +52,14 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Run]
 Filename: "{app}\AgentRelay.exe"; Parameters: "codex install"; StatusMsg: "Installing managed Codex integration..."; Flags: runhidden waituntilterminated; Check: ShouldInstallCodex
+Filename: "{app}\AgentRelay.exe"; Flags: nowait runasoriginaluser; Check: IsAutoUpdate
 Filename: "{app}\AgentRelay.exe"; Description: "{cm:LaunchProgram,Agent Relay}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{app}\AgentRelay.exe"; Parameters: "codex remove"; RunOnceId: "AgentRelayCodexRemove"; Flags: runhidden waituntilterminated
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{localappdata}\AgentRelay\updates"
 
 [Code]
 function InitializeSetup(): Boolean;
@@ -67,4 +72,9 @@ end;
 function ShouldInstallCodex(): Boolean;
 begin
   Result := CompareText(ExpandConstant('{param:NOCODEXINTEGRATION|0}'), '1') <> 0;
+end;
+
+function IsAutoUpdate(): Boolean;
+begin
+  Result := CompareText(ExpandConstant('{param:AUTOUPDATE|0}'), '1') = 0;
 end;

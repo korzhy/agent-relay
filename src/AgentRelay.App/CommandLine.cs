@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using AgentRelay.Core;
+using AgentRelay.Windows;
 
 namespace AgentRelay.App;
 
@@ -22,6 +23,7 @@ public static class CommandLine
             "activity" => await ActivityAsync(services, args, cancellationToken),
             "handoff" => await HandoffAsync(services, args, cancellationToken),
             "codex" => await CodexAsync(services, args, cancellationToken),
+            "update" => await UpdateAsync(services, args, cancellationToken),
             "--help" or "-h" or "help" => Help(),
             _ => throw new ArgumentException($"Unknown command: {args[0]}")
         };
@@ -230,6 +232,24 @@ public static class CommandLine
                     return 6;
                 }
 
+                var updateState = await services.Updates.GetStateAsync(cancellationToken);
+                if (updateState is
+                    {
+                        Status: UpdateStatus.Installing
+                    } &&
+                    DateTimeOffset.UtcNow - updateState.CheckedAt <
+                    UpdateService.InstallationReservationLifetime)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(
+                        new
+                        {
+                            status = "updateInstalling",
+                            detail = "Hand-off is blocked while a verified Agent Relay update is installing."
+                        },
+                        JsonSupport.Options));
+                    return 8;
+                }
+
                 project ??= await services.Projects.AddAsync(workspace, cancellationToken);
                 if (project.TrustedAt is null)
                 {
@@ -353,6 +373,86 @@ public static class CommandLine
         }
     }
 
+    private static async Task<int> UpdateAsync(
+        RelayServices services,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        Require(args, 2, "update status|check|set|apply");
+        switch (args[1].ToLowerInvariant())
+        {
+            case "status":
+                Console.WriteLine(JsonSerializer.Serialize(
+                    new
+                    {
+                        currentVersion = services.Updates.CurrentVersion,
+                        settings = await services.Updates.GetSettingsAsync(cancellationToken),
+                        state = await services.Updates.GetStateAsync(cancellationToken)
+                    },
+                    JsonSupport.Options));
+                return 0;
+            case "set":
+                Require(args, 3, "update set on|off");
+                var enabled = args[2].ToLowerInvariant() switch
+                {
+                    "on" => true,
+                    "off" => false,
+                    _ => throw new ArgumentException("Usage: AgentRelay.exe update set on|off")
+                };
+                Console.WriteLine(JsonSerializer.Serialize(
+                    await services.Updates.SetEnabledAsync(enabled, cancellationToken),
+                    JsonSupport.Options));
+                return 0;
+            case "check":
+                var checkedState = await services.Updates.CheckAsync(true, cancellationToken);
+                Console.WriteLine(JsonSerializer.Serialize(checkedState, JsonSupport.Options));
+                return checkedState.Status == UpdateStatus.Failed ? 4 : 0;
+            case "apply":
+                var state = await services.Updates.CheckAsync(false, cancellationToken);
+                if (state.Status is not (UpdateStatus.Staged or UpdateStatus.Deferred))
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(state, JsonSupport.Options));
+                    return state.Status == UpdateStatus.Failed ? 4 : 3;
+                }
+                if (await HasActiveRunnerAsync(services, cancellationToken))
+                {
+                    var deferred = await services.Updates.MarkDeferredAsync(
+                        state,
+                        "Обновление отложено до завершения активного Flash runner.",
+                        cancellationToken);
+                    Console.WriteLine(JsonSerializer.Serialize(deferred, JsonSupport.Options));
+                    return 7;
+                }
+                var executable = Environment.ProcessPath
+                                 ?? throw new InvalidOperationException("Current executable path is unavailable.");
+                if (!services.Updates.IsInstalledBuild(executable))
+                {
+                    throw new InvalidOperationException(
+                        "Automatic install is allowed only from the per-user Agent Relay installation.");
+                }
+                await services.Updates.LaunchInstallerAsync(state, cancellationToken);
+                Console.WriteLine("Verified Agent Relay update installer started.");
+                return 0;
+            default:
+                throw new ArgumentException($"Unknown update action: {args[1]}");
+        }
+    }
+
+    private static async Task<bool> HasActiveRunnerAsync(
+        RelayServices services,
+        CancellationToken cancellationToken)
+    {
+        foreach (var project in await services.Projects.ListAsync(cancellationToken))
+        {
+            var state = await services.Recovery.RecoverAsync(project, cancellationToken);
+            if (state.State is RelayState.Running or RelayState.Waiting)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static int Help()
     {
         Console.WriteLine("""
@@ -370,6 +470,10 @@ public static class CommandLine
               handoff cancel --project <id|path>
               handoff resume --project <id|path>
               codex install|repair|remove
+              update status
+              update check
+              update set on|off
+              update apply
             """);
         return 0;
     }

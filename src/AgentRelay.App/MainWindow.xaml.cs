@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows;
@@ -26,11 +27,13 @@ public partial class MainWindow : Window
     private readonly RelayServices _services;
     private readonly DispatcherTimer _runtimeDebounce;
     private readonly DispatcherTimer _quotaTimer;
+    private readonly DispatcherTimer _updateTimer;
     private readonly Forms.NotifyIcon _trayIcon;
     private FileSystemWatcher? _runtimeWatcher;
     private DashboardMission? _currentMission;
     private bool _loadingPolicy;
     private bool _explicitClose;
+    private bool _updateCheckInProgress;
     private string? _lastNotifiedReviewPath;
 
     public MainWindow(RelayServices services)
@@ -62,6 +65,8 @@ public partial class MainWindow : Window
         };
         _quotaTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         _quotaTimer.Tick += async (_, _) => await RefreshQuotaAsync();
+        _updateTimer = new DispatcherTimer { Interval = UpdateService.AutoApplyInterval };
+        _updateTimer.Tick += async (_, _) => await CheckForUpdatesAsync();
 
         Loaded += OnLoaded;
         Activated += async (_, _) => await RefreshDashboardAsync();
@@ -83,6 +88,8 @@ public partial class MainWindow : Window
         StartRuntimeWatcher();
         await RefreshDashboardAsync();
         _quotaTimer.Start();
+        _updateTimer.Start();
+        await CheckForUpdatesAsync();
     }
 
     private async void Threshold_Checked(object sender, RoutedEventArgs e)
@@ -205,6 +212,88 @@ public partial class MainWindow : Window
         QuotaChip.ToolTip = quota.RemainingPercentage is int lastKnown
             ? $"{quota.Source}\nПоследний известный снимок: {lastKnown}% · {quota.ObservedAt:yyyy-MM-dd HH:mm} UTC\n{quota.Detail}"
             : $"{quota.Source}\n{quota.Detail}";
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        if (_updateCheckInProgress)
+        {
+            return;
+        }
+        _updateCheckInProgress = true;
+        try
+        {
+            var state = await _services.Updates.CheckAsync();
+            UpdateFooterText.Text = state.Status switch
+            {
+                UpdateStatus.Disabled => $"v{_services.Updates.CurrentVersion} · автообновление выключено",
+                UpdateStatus.Staged or UpdateStatus.Deferred =>
+                    $"v{_services.Updates.CurrentVersion} · готово обновление {state.LatestVersion}",
+                UpdateStatus.Installing =>
+                    $"v{_services.Updates.CurrentVersion} · обновление устанавливается",
+                UpdateStatus.Failed => $"v{_services.Updates.CurrentVersion} · обновление недоступно",
+                _ => $"v{_services.Updates.CurrentVersion} · автообновление включено"
+            };
+
+            if (state.Status is not (UpdateStatus.Staged or UpdateStatus.Deferred))
+            {
+                return;
+            }
+            if (!await CanInstallUpdateNowAsync())
+            {
+                await _services.Updates.MarkDeferredAsync(
+                    state, "Обновление отложено до завершения активного Flash runner.");
+                StatusText.Text = $"Обновление {state.LatestVersion} загружено и отложено.";
+                return;
+            }
+            var executable = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(executable) ||
+                !_services.Updates.IsInstalledBuild(executable))
+            {
+                StatusText.Text =
+                    $"Обновление {state.LatestVersion} проверено; автоматическая установка доступна только installed build.";
+                return;
+            }
+
+            StatusText.Text = $"Устанавливается Agent Relay {state.LatestVersion}…";
+            await _services.Updates.LaunchInstallerAsync(state);
+            ExitForUpdate();
+        }
+        catch (Exception exception) when (
+            exception is IOException or InvalidDataException or HttpRequestException or
+                UnauthorizedAccessException or InvalidOperationException)
+        {
+            StatusText.Text = $"Автообновление: {exception.Message}";
+        }
+        finally
+        {
+            _updateCheckInProgress = false;
+        }
+    }
+
+    private async Task<bool> CanInstallUpdateNowAsync()
+    {
+        foreach (var project in await _services.Projects.ListAsync())
+        {
+            var state = await _services.Recovery.RecoverAsync(project);
+            if (state.State is RelayState.Running or RelayState.Waiting)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void ExitForUpdate()
+    {
+        _explicitClose = true;
+        _quotaTimer.Stop();
+        _updateTimer.Stop();
+        _runtimeDebounce.Stop();
+        _runtimeWatcher?.Dispose();
+        _trayIcon.Visible = false;
+        _trayIcon.Dispose();
+        System.Windows.Application.Current.Shutdown();
     }
 
     private async Task RefreshDashboardAsync()
@@ -478,6 +567,7 @@ public partial class MainWindow : Window
             return;
         }
         _quotaTimer.Stop();
+        _updateTimer.Stop();
         _runtimeDebounce.Stop();
         _runtimeWatcher?.Dispose();
         _trayIcon.Visible = false;
