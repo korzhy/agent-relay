@@ -79,7 +79,7 @@
                         <TextBlock x:Name="MissionMetaText" Text="Sol использует Flash только когда порог и задача это оправдывают."
                                    Foreground="#91A0B5" Margin="0,5,0,0"/>
                     </StackPanel>
-                    <TextBlock Grid.Column="1" Text="Antigravity / gemini-3.6-flash-high"
+                    <TextBlock Grid.Column="1" Text="Antigravity / latest Flash High"
                                Foreground="#8EA0BA" VerticalAlignment="Top" Margin="18,4,0,0"/>
                 </Grid>
 

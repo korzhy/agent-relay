@@ -596,6 +596,7 @@ public partial class MainWindow : Window
         => action.Action switch
         {
             "dispatch" => "Flash запущен с exact model.",
+            "model-resolved" => $"Выбрана модель: {action.Detail}",
             "complete" when state == RelayState.ReportReady => "Валидный отчёт Flash принят.",
             "complete" => "Внешнее выполнение завершилось без принятого отчёта.",
             "prompt-copy" => "Точный review prompt скопирован.",

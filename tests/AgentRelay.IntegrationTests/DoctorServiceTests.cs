@@ -35,7 +35,7 @@ public sealed class DoctorServiceTests : IDisposable
         Assert.True(report.Checks.Single(check => check.Name == "Antigravity CLI").Ready);
         var executor = report.Checks.Single(check => check.Name == "Flash executor");
         Assert.True(executor.Ready);
-        Assert.Contains(AgentRelayConstants.Model, executor.Detail, StringComparison.Ordinal);
+        Assert.Contains("gemini-3.7-flash-high", executor.Detail, StringComparison.Ordinal);
         Assert.False(report.Checks.Single(check => check.Name == "Codex integration").Ready);
     }
 
@@ -49,7 +49,58 @@ public sealed class DoctorServiceTests : IDisposable
     public void ModelCatalog_RequiresExactFirstColumn(string output, bool expected)
         => Assert.Equal(
             expected,
-            DoctorService.AgyModelCatalog.ContainsExactModel(output, AgentRelayConstants.Model));
+            AgyModelCatalog.ContainsExactModel(output, AgentRelayConstants.FallbackModel));
+
+    [Fact]
+    public void ModelCatalog_SelectsNewestNumericFlashHigh()
+    {
+        const string output = """
+            gemini-3.6-flash-high Gemini 3.6 Flash (High)
+            gemini-3.10-flash-high Gemini 3.10 Flash (High)
+            gemini-3.7-flash-medium Gemini 3.7 Flash (Medium)
+            gemini-3.7-flash-high Gemini 3.7 Flash (High)
+            claude-sonnet-4-6 Claude Sonnet
+            """;
+
+        Assert.Equal("gemini-3.10-flash-high", AgyModelCatalog.SelectLatestFlashHigh(output));
+    }
+
+    [Fact]
+    public async Task ModelSelection_ResolvesLatestAndFallsBackToVerifiedCache()
+    {
+        var home = Path.Combine(_tempDirectory, "selection-home");
+        var local = Path.Combine(_tempDirectory, "selection-local");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(local);
+        var paths = new AppPaths(home, local);
+        var service = new AgyModelSelectionService(paths, new AtomicFileStore());
+        var agyPath = Path.Combine(GetFakeAgyOutput(), "agy.exe");
+
+        var discovered = await service.ResolveAsync(agyPath);
+        Assert.Equal(ModelSelectionSource.Catalog, discovered.Source);
+        Assert.Equal("gemini-3.7-flash-high", discovered.Executor.Model);
+        Assert.True(File.Exists(paths.ModelSelectionFile));
+
+        var cached = await service.ResolveAsync(Path.Combine(local, "missing-agy.exe"));
+        Assert.Equal(ModelSelectionSource.Cache, cached.Source);
+        Assert.Equal(discovered.Executor, cached.Executor);
+    }
+
+    [Fact]
+    public async Task ModelSelection_UsesBuiltInFallbackWithoutCatalogOrCache()
+    {
+        var home = Path.Combine(_tempDirectory, "fallback-home");
+        var local = Path.Combine(_tempDirectory, "fallback-local");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(local);
+        var service = new AgyModelSelectionService(
+            new AppPaths(home, local), new AtomicFileStore());
+
+        var result = await service.ResolveAsync(Path.Combine(local, "missing-agy.exe"));
+
+        Assert.Equal(ModelSelectionSource.BuiltInFallback, result.Source);
+        Assert.Equal(AgentRelayConstants.FallbackModel, result.Executor.Model);
+    }
 
     public void Dispose()
     {

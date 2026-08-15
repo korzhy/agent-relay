@@ -39,7 +39,7 @@ public sealed class PolicyServiceTests : IDisposable
         Assert.True(policy.Enabled);
         Assert.Equal(DelegationLevel.Medium, policy.Level);
         Assert.Equal(AgentRelayConstants.Provider, policy.PreferredExecutor.Provider);
-        Assert.Equal(AgentRelayConstants.Model, policy.PreferredExecutor.Model);
+        Assert.Equal(AgentRelayConstants.ModelSelector, policy.PreferredExecutor.Model);
     }
 
     [Fact]

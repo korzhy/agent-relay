@@ -59,7 +59,7 @@ public sealed class CodexIntegrationServiceTests : IDisposable
         Assert.True(policy.Enabled);
         Assert.Equal(DelegationLevel.Medium, policy.Level);
         Assert.Equal(AgentRelayConstants.Provider, policy.PreferredExecutor.Provider);
-        Assert.Equal(AgentRelayConstants.Model, policy.PreferredExecutor.Model);
+        Assert.Equal(AgentRelayConstants.ModelSelector, policy.PreferredExecutor.Model);
 
         var agentsText = await File.ReadAllTextAsync(_appPaths.CodexAgentsFile);
         var skillText = await File.ReadAllTextAsync(

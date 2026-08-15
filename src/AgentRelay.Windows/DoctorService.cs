@@ -16,11 +16,16 @@ public sealed class DoctorService
 {
     private readonly AppPaths _paths;
     private readonly IClock _clock;
+    private readonly AgyModelSelectionService _models;
 
-    public DoctorService(AppPaths paths, IClock? clock = null)
+    public DoctorService(
+        AppPaths paths,
+        IClock? clock = null,
+        AtomicFileStore? files = null)
     {
         _paths = paths;
         _clock = clock ?? new SystemClock();
+        _models = new AgyModelSelectionService(paths, files ?? new AtomicFileStore(), _clock);
     }
 
     public async Task<DoctorReport> RunAsync(CancellationToken cancellationToken = default)
@@ -37,7 +42,7 @@ public sealed class DoctorService
 
         if (File.Exists(agyPath))
         {
-            var modelCheck = await CheckExactModelAsync(agyPath, cancellationToken).ConfigureAwait(false);
+            var modelCheck = await CheckLatestModelAsync(agyPath, cancellationToken).ConfigureAwait(false);
             checks.Add(modelCheck);
         }
         else
@@ -45,7 +50,7 @@ public sealed class DoctorService
             checks.Add(new DoctorCheck(
                 "Flash executor",
                 false,
-                $"Cannot verify exact model {AgentRelayConstants.Model} without agy.exe."));
+                "Cannot resolve the latest Flash High model without agy.exe."));
         }
 
         checks.Add(CheckCodexIntegration());
@@ -123,68 +128,22 @@ public sealed class DoctorService
         }
     }
 
-    private async Task<DoctorCheck> CheckExactModelAsync(
+    private async Task<DoctorCheck> CheckLatestModelAsync(
         string agyPath,
         CancellationToken cancellationToken)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(20));
         try
         {
-            var start = new ProcessStartInfo(agyPath)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            start.ArgumentList.Add("models");
-            using var process = Process.Start(start)
-                ?? throw new InvalidOperationException("agy models did not start.");
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            var stdout = await stdoutTask.ConfigureAwait(false);
-            var stderr = await stderrTask.ConfigureAwait(false);
-            var exact = process.ExitCode == 0 && AgyModelCatalog.ContainsExactModel(
-                stdout,
-                AgentRelayConstants.Model);
+            var resolved = await _models.ResolveAsync(agyPath, cancellationToken).ConfigureAwait(false);
+            var fromCatalog = resolved.Source == ModelSelectionSource.Catalog;
             return new DoctorCheck(
                 "Flash executor",
-                exact,
-                exact
-                    ? $"{AgentRelayConstants.Provider} / {AgentRelayConstants.Model}"
-                    : $"Exact model {AgentRelayConstants.Model} is unavailable. Exit {process.ExitCode}: {stderr.Trim()}");
-        }
-        catch (OperationCanceledException)
-        {
-            return new DoctorCheck("Flash executor", false, "agy models timed out.");
+                fromCatalog,
+                $"{resolved.Executor.Provider} / {resolved.Executor.Model} · {resolved.Detail}");
         }
         catch (Exception exception)
         {
             return new DoctorCheck("Flash executor", false, exception.Message);
-        }
-    }
-
-    public static class AgyModelCatalog
-    {
-        public static bool ContainsExactModel(string output, string exactModel)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(exactModel);
-
-            foreach (var line in output.Split(
-                         ['\r', '\n'],
-                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var separator = line.AsSpan().IndexOfAny(' ', '\t');
-                var model = separator < 0 ? line.AsSpan() : line.AsSpan(0, separator);
-                if (model.Equals(exactModel, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
     }
 

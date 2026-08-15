@@ -15,13 +15,19 @@ public static class Program
         if (args.Contains("models"))
         {
             Console.Error.WriteLine("Fetching available models...");
-            Console.WriteLine($"{AgentRelayConstants.Model}\tGemini 3.6 Flash (High)");
+            Console.WriteLine("gemini-3.7-flash-high\tGemini 3.7 Flash (High)");
+            Console.WriteLine($"{AgentRelayConstants.FallbackModel}\tGemini 3.6 Flash (High)");
             return 0;
         }
 
         string? taskPath = null;
+        string? requestedModel = null;
         for (int i = 0; i < args.Length; i++)
         {
+            if (args[i] == "--model" && i + 1 < args.Length)
+            {
+                requestedModel = args[i + 1];
+            }
             if (args[i] == "--print" && i + 1 < args.Length)
             {
                 var prompt = args[i + 1];
@@ -57,6 +63,12 @@ public static class Program
             Console.Error.WriteLine("FakeAgy error: Failed to parse task payload.");
             return 1;
         }
+        if (!string.Equals(requestedModel, task.Executor.Model, StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine(
+                $"FakeAgy error: requested model {requestedModel} does not match {task.Executor.Model}.");
+            return 1;
+        }
 
         const string modePrefix = "fake-mode:";
         var mode = task.Instructions.StartsWith(modePrefix, StringComparison.OrdinalIgnoreCase)
@@ -69,7 +81,7 @@ public static class Program
         }
         if (mode.Equals("quota", StringComparison.OrdinalIgnoreCase))
         {
-            Console.Error.WriteLine("quota exhausted: rate limit exceeded for gemini-3.6-flash-high");
+            Console.Error.WriteLine($"quota exhausted: rate limit exceeded for {task.Executor.Model}");
             return 1;
         }
         if (mode.Equals("stall", StringComparison.OrdinalIgnoreCase))

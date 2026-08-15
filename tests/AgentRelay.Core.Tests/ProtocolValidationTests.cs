@@ -17,7 +17,7 @@ public sealed class ProtocolValidationTests : IDisposable
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "AgentRelayCoreTests_Protocol_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
-        _validExecutor = new ExecutorIdentity(AgentRelayConstants.Provider, AgentRelayConstants.Model);
+        _validExecutor = new ExecutorIdentity(AgentRelayConstants.Provider, AgentRelayConstants.FallbackModel);
         _handoffId = Guid.NewGuid().ToString("N");
         _missionId = Guid.NewGuid().ToString("N");
         _runAttemptId = Guid.NewGuid().ToString("N");
@@ -80,6 +80,21 @@ public sealed class ProtocolValidationTests : IDisposable
         Assert.NotEqual(first.Control.HandoffId, second.Control.HandoffId);
         Assert.NotEqual(first.Control.RunAttemptId, second.Control.RunAttemptId);
         Assert.Equal(originalTask, await File.ReadAllBytesAsync(first.TaskPath));
+    }
+
+    [Fact]
+    public async Task PublishAsync_PinsResolvedExecutorInImmutablePayloads()
+    {
+        var files = new AtomicFileStore();
+        var service = new ProtocolService(files);
+        var executor = new ExecutorIdentity(AgentRelayConstants.Provider, "gemini-3.7-flash-high");
+
+        var handoff = await service.PublishAsync(
+            _tempDir, new MissionRequest("Latest", "Do work", ["dotnet test"]), executor);
+        var task = await files.ReadJsonAsync<TaskPayload>(handoff.TaskPath);
+
+        Assert.Equal(executor, handoff.Control.Executor);
+        Assert.Equal(executor, task?.Executor);
     }
 
     [Fact]

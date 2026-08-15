@@ -19,7 +19,7 @@ if ($Action -eq "set-level") {
     level = $Level
     preferredExecutor = [ordered]@{
       provider = "Antigravity"
-      model = "gemini-3.6-flash-high"
+      model = "latest-gemini-flash-high"
     }
     updatedAt = (Get-Date).ToUniversalTime().ToString("o")
   }

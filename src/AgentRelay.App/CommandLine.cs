@@ -283,8 +283,21 @@ public static class CommandLine
                     $"Sol передаёт Flash ограниченную задачу: {title}.",
                     missionId,
                     cancellationToken: cancellationToken);
+                var modelSelection = await services.Models.ResolveAsync(
+                    services.Doctor.ResolveAgyPath(), cancellationToken);
+                await services.Runtime.AppendLogAsync(
+                    new ActionLogEntry(
+                        DateTimeOffset.UtcNow,
+                        project.Id,
+                        "model-resolved",
+                        $"model={modelSelection.Executor.Model} source={modelSelection.Source}; " +
+                        modelSelection.Detail),
+                    cancellationToken);
                 var handoff = await services.Protocol.PublishAsync(
-                    project.Path, new MissionRequest(title, instructions, gates, missionId), cancellationToken);
+                    project.Path,
+                    new MissionRequest(title, instructions, gates, missionId),
+                    modelSelection.Executor,
+                    cancellationToken);
                 await services.Activity.SetAsync(
                     project,
                     SolActivityPhase.Delegating,
@@ -317,7 +330,8 @@ public static class CommandLine
         => System.Windows.MessageBox.Show(
                $"Разрешить Agent Relay запускать Flash с правом редактирования только в этой папке?\n\n" +
                $"{workspace}\n\n" +
-               "Будет использован exact executor Antigravity / gemini-3.6-flash-high с accept-edits. " +
+               "Будет использована последняя доступная Gemini Flash High; exact model будет " +
+               "зафиксирована в handoff перед запуском с accept-edits. " +
                "Это однократное доверие конкретному workspace и не меняет глобальный порог делегирования.",
                "Agent Relay — доверие workspace",
                System.Windows.MessageBoxButton.YesNo,

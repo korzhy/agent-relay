@@ -139,6 +139,7 @@ public sealed class AgyRunner
         var stdoutPath = Path.Combine(logDirectory, $"{handoff.Control.RunAttemptId}.stdout.log");
         var stderrPath = Path.Combine(logDirectory, $"{handoff.Control.RunAttemptId}.stderr.log");
         var prompt = BuildRunnerPrompt(handoff);
+        var executor = handoff.Control.Executor;
         var start = new ProcessStartInfo(agyExecutable)
         {
             WorkingDirectory = project.Path,
@@ -148,7 +149,7 @@ public sealed class AgyRunner
             CreateNoWindow = true
         };
         start.ArgumentList.Add("--model");
-        start.ArgumentList.Add(AgentRelayConstants.Model);
+        start.ArgumentList.Add(executor.Model);
         start.ArgumentList.Add("--mode");
         start.ArgumentList.Add("accept-edits");
         start.ArgumentList.Add("--dangerously-skip-permissions");
@@ -198,14 +199,14 @@ public sealed class AgyRunner
             handoff.Control.RunAttemptId,
             process.Id,
             _clock.UtcNow,
-            $"Running {AgentRelayConstants.Provider} / {AgentRelayConstants.Model}.",
+            $"Running {executor.Provider} / {executor.Model}.",
             handoff.ControlHash,
             null,
             Path.GetFullPath(agyExecutable));
         await _runtime.WriteAsync(running, cancellationToken).ConfigureAwait(false);
         await _runtime.AppendLogAsync(new ActionLogEntry(
             _clock.UtcNow, project.Id, "dispatch",
-            $"handoff={handoff.Control.HandoffId} revision={handoff.Control.Revision} model={AgentRelayConstants.Model}"),
+            $"handoff={handoff.Control.HandoffId} revision={handoff.Control.Revision} model={executor.Model}"),
             cancellationToken).ConfigureAwait(false);
         if (_activity is not null)
         {
@@ -427,7 +428,7 @@ public sealed class AgyRunner
             - revision: {handoff.Control.Revision}
             - runAttemptId: {handoff.Control.RunAttemptId}
             - taskSha256: {handoff.Control.Task.Sha256}
-            - executor: {AgentRelayConstants.Provider} / {AgentRelayConstants.Model}
+            - executor: {handoff.Control.Executor.Provider} / {handoff.Control.Executor.Model}
 
             Execute the task now in the current workspace. Write a single JSON report payload to:
             {handoff.Control.RequiredReportPath}

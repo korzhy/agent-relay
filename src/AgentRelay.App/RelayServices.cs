@@ -18,6 +18,7 @@ public sealed class RelayServices
         ReviewPromptDeliveryService delivery,
         RuntimeRecoveryService recovery,
         DoctorService doctor,
+        AgyModelSelectionService models,
         CodexIntegrationService codex,
         AntigravityQuotaService quota,
         UpdateService updates)
@@ -32,6 +33,7 @@ public sealed class RelayServices
         Delivery = delivery;
         Recovery = recovery;
         Doctor = doctor;
+        Models = models;
         Codex = codex;
         Quota = quota;
         Updates = updates;
@@ -47,6 +49,7 @@ public sealed class RelayServices
     public ReviewPromptDeliveryService Delivery { get; }
     public RuntimeRecoveryService Recovery { get; }
     public DoctorService Doctor { get; }
+    public AgyModelSelectionService Models { get; }
     public CodexIntegrationService Codex { get; }
     public AntigravityQuotaService Quota { get; }
     public UpdateService Updates { get; }
@@ -76,6 +79,7 @@ public sealed class RelayServices
         var activity = new SolActivityStore(paths, files, clock);
         var delivery = new ReviewPromptDeliveryService(
             paths, files, clipboard, clock);
+        var models = new AgyModelSelectionService(paths, files, clock);
         return new RelayServices(
             paths,
             files,
@@ -86,7 +90,8 @@ public sealed class RelayServices
             activity,
             delivery,
             new RuntimeRecoveryService(runtime, clock),
-            new DoctorService(paths, clock),
+            new DoctorService(paths, clock, files),
+            models,
             new CodexIntegrationService(
                 paths,
                 files,

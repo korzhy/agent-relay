@@ -10,7 +10,7 @@ public enum DelegationLevel
 
 public sealed record ExecutorPreference(
     string Provider = AgentRelayConstants.Provider,
-    string Model = AgentRelayConstants.Model);
+    string Model = AgentRelayConstants.ModelSelector);
 
 public sealed record DelegationPolicy(
     int SchemaVersion,
@@ -47,11 +47,15 @@ public sealed record DelegationPolicy(
             throw new InvalidDataException("Policy enabled and level fields disagree.");
         }
 
+        var supportedSelector = string.Equals(
+            PreferredExecutor.Model, AgentRelayConstants.ModelSelector, StringComparison.Ordinal);
+        var legacyPinnedModel = string.Equals(
+            PreferredExecutor.Model, AgentRelayConstants.FallbackModel, StringComparison.Ordinal);
         if (!string.Equals(PreferredExecutor.Provider, AgentRelayConstants.Provider, StringComparison.Ordinal) ||
-            !string.Equals(PreferredExecutor.Model, AgentRelayConstants.Model, StringComparison.Ordinal))
+            (!supportedSelector && !legacyPinnedModel))
         {
             throw new InvalidDataException(
-                $"Executor must be exactly {AgentRelayConstants.Provider} / {AgentRelayConstants.Model}.");
+                $"Executor policy must be {AgentRelayConstants.Provider} / {AgentRelayConstants.ModelSelector}.");
         }
     }
 }
@@ -125,6 +129,13 @@ public sealed class PolicyService
 
     private static DelegationPolicy Normalize(DelegationPolicy policy)
     {
+        if (string.Equals(
+                policy.PreferredExecutor.Model,
+                AgentRelayConstants.FallbackModel,
+                StringComparison.Ordinal))
+        {
+            policy = policy with { PreferredExecutor = new ExecutorPreference() };
+        }
         if (!policy.Enabled || policy.Level == DelegationLevel.Off)
         {
             return policy with { Enabled = false, Level = DelegationLevel.Off };

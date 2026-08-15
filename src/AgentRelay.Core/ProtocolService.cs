@@ -26,7 +26,19 @@ public sealed class ProtocolService
         string workspaceRoot,
         MissionRequest request,
         CancellationToken cancellationToken = default)
+        => await PublishAsync(
+            workspaceRoot,
+            request,
+            new ExecutorIdentity(AgentRelayConstants.Provider, AgentRelayConstants.FallbackModel),
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task<PublishedHandoff> PublishAsync(
+        string workspaceRoot,
+        MissionRequest request,
+        ExecutorIdentity executor,
+        CancellationToken cancellationToken = default)
     {
+        ValidateExecutor(executor);
         var workspace = WorkspaceSafety.Validate(workspaceRoot);
         var transport = Path.Combine(workspace, AgentRelayConstants.TransportDirectory);
         var currentControlPath = Path.Combine(transport, "control.json");
@@ -57,8 +69,6 @@ public sealed class ProtocolService
             : 1;
         var handoffId = Guid.NewGuid().ToString("N");
         var runAttemptId = Guid.NewGuid().ToString("N");
-        var executor = new ExecutorIdentity(AgentRelayConstants.Provider, AgentRelayConstants.Model);
-
         var tasksDirectory = Path.Combine(transport, "tasks");
         var reportsDirectory = Path.Combine(transport, "reports");
         var reviewsDirectory = Path.Combine(transport, "reviews");
@@ -290,6 +300,10 @@ public sealed class ProtocolService
         }
 
         ValidateExecutor(report.Executor);
+        if (report.Executor != control.Executor)
+        {
+            throw new InvalidDataException("Report executor does not match the active handoff.");
+        }
         if (report.ChangedFiles is null || report.Commands is null ||
             report.UnavailableDependencies is null || report.ProhibitedActions is null)
         {
@@ -334,6 +348,10 @@ public sealed class ProtocolService
             throw new InvalidDataException("Task identity does not match the active control envelope.");
         }
         ValidateExecutor(task.Executor);
+        if (task.Executor != control.Executor)
+        {
+            throw new InvalidDataException("Task executor does not match the active handoff.");
+        }
     }
 
     private static async Task<bool> IsTerminalAsync(
@@ -363,10 +381,10 @@ public sealed class ProtocolService
     private static void ValidateExecutor(ExecutorIdentity executor)
     {
         if (!string.Equals(executor.Provider, AgentRelayConstants.Provider, StringComparison.Ordinal) ||
-            !string.Equals(executor.Model, AgentRelayConstants.Model, StringComparison.Ordinal))
+            !FlashModelIdentity.IsSupported(executor.Model))
         {
             throw new InvalidDataException(
-                $"Executor must be exactly {AgentRelayConstants.Provider} / {AgentRelayConstants.Model}.");
+                $"Executor must be {AgentRelayConstants.Provider} / gemini-<version>-flash-high.");
         }
     }
 

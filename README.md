@@ -15,10 +15,10 @@ can update automatically from this repository's GitHub Releases.
 | Setting | Values | Meaning |
 |---|---|---|
 | External delegation threshold / Порог внешнего делегирования | `off`, `low`, `medium`, `high` (default `medium`) | How readily Codex routes suitable implementation to an external agent. |
-| Flash executor | `Antigravity / gemini-3.6-flash-high` | Exact provider, model, and model-effort suffix used by the runner. |
+| Flash executor | `Antigravity / latest gemini-*-flash-high` | Resolved through `agy models` before each new handoff; the exact model is then pinned in the protocol. |
 
-The `high` suffix in `gemini-3.6-flash-high` is not the delegation threshold.
-Agent Relay fails closed if `agy models` does not list that exact model.
+The `high` suffix in the selected model is not the delegation threshold.
+Agent Relay selects the highest numeric Flash High version advertised by `agy models`, caches the last verified model, and uses the built-in fallback only when discovery and cache are unavailable.
 
 ## Quickstart
 
@@ -50,7 +50,7 @@ open or in the tray.
 Copy `AgentRelaySetup-x64.exe` to the second Windows 10/11 x64 PC and run it as
 the target user. Install Codex App and Antigravity separately, sign in to them
 through their normal UIs, and confirm `agy models` lists
-`gemini-3.6-flash-high`. Then run Agent Relay Doctor and **Install / repair
+at least one `gemini-*-flash-high` model. Then run Agent Relay Doctor and **Install / repair
 Codex integration**.
 
 Version `0.2.0` and older cannot update themselves. Install `0.3.0` once on
@@ -94,7 +94,7 @@ AgentRelay.exe update apply
 
 The `project` commands are diagnostic/compatibility interfaces, not the normal
 workflow. `project trust` is an explicit consent operation: it authorizes Agent Relay to
-start the exact Flash executor in that workspace using
+resolve and start the newest Flash High executor in that workspace using
 `--mode accept-edits --dangerously-skip-permissions`. Drive roots, the user
 profile root, Windows, Program Files, ProgramData, and system directories are
 rejected. `resume` in the GUI re-enables future dispatch; it never silently
@@ -155,7 +155,7 @@ general Antigravity prompt credits when a compatible local
 timestamp, and fresh/stale status. Agent Relay extracts only the numeric credit
 fields and timestamp; it does not read process tokens or call Antigravity's
 private localhost API. This percentage is not a model-specific guarantee for
-`gemini-3.6-flash-high`. A stale snapshot never shows a percentage in the main
+the exact model recorded in the handoff. A stale snapshot never shows a percentage in the main
 header; its old value and timestamp remain available in diagnostics. Without a
 compatible source the value is explicitly `N/A`, never invented.
 
@@ -170,7 +170,7 @@ Agent Relay assumes the locally signed-in Codex and Antigravity installations
 and the selected workspace owner are trusted. Task text and repository content
 are untrusted inputs. Controls include:
 
-- exact executor/model verification with no silent fallback;
+- exact executor/model pinning with an explicit cached or built-in fallback when discovery fails;
 - per-workspace one-time trust before noninteractive edits;
 - canonical path containment and system/root-directory denial;
 - immutable payloads and hash-bound envelopes;

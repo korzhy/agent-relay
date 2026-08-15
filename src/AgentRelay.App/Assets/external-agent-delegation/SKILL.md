@@ -1,6 +1,6 @@
 ---
 name: external-agent-delegation
-description: Route bounded, locally verifiable implementation through Agent Relay to Antigravity gemini-3.6-flash-high when the active delegation threshold makes that cheaper than direct Codex work; retain Sol architecture, security, review, and integration authority.
+description: Route bounded, locally verifiable implementation through Agent Relay to the latest available Antigravity Gemini Flash High model when the active delegation threshold makes that cheaper than direct Codex work; retain Sol architecture, security, review, and integration authority.
 ---
 
 # External Agent Delegation
@@ -20,8 +20,10 @@ global `off`.
 - `high`: prefer Flash for locally provable implementation; transfer to Codex
   after the same root cause repeats twice.
 
-Threshold is separate from model effort. Use exactly
-`Antigravity / gemini-3.6-flash-high`; never substitute a model.
+Threshold is separate from model effort. Agent Relay resolves the newest
+available `gemini-*-flash-high` via `agy models` before each new handoff, then
+records that exact executor in the immutable task and control payloads. Do not
+bypass Relay's resolver or substitute another model family or effort.
 
 ## Dispatch through Agent Relay
 
