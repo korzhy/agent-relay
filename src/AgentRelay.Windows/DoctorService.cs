@@ -146,9 +146,9 @@ public sealed class DoctorService
             await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             var stdout = await stdoutTask.ConfigureAwait(false);
             var stderr = await stderrTask.ConfigureAwait(false);
-            var exact = process.ExitCode == 0 && stdout.Split(
-                    ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Contains(AgentRelayConstants.Model, StringComparer.Ordinal);
+            var exact = process.ExitCode == 0 && AgyModelCatalog.ContainsExactModel(
+                stdout,
+                AgentRelayConstants.Model);
             return new DoctorCheck(
                 "Flash executor",
                 exact,
@@ -163,6 +163,28 @@ public sealed class DoctorService
         catch (Exception exception)
         {
             return new DoctorCheck("Flash executor", false, exception.Message);
+        }
+    }
+
+    public static class AgyModelCatalog
+    {
+        public static bool ContainsExactModel(string output, string exactModel)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(exactModel);
+
+            foreach (var line in output.Split(
+                         ['\r', '\n'],
+                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var separator = line.AsSpan().IndexOfAny(' ', '\t');
+                var model = separator < 0 ? line.AsSpan() : line.AsSpan(0, separator);
+                if (model.Equals(exactModel, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 

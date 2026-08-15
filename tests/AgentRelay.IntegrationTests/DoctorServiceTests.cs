@@ -39,6 +39,18 @@ public sealed class DoctorServiceTests : IDisposable
         Assert.False(report.Checks.Single(check => check.Name == "Codex integration").Ready);
     }
 
+    [Theory]
+    [InlineData("gemini-3.6-flash-high", true)]
+    [InlineData("gemini-3.6-flash-high\tGemini 3.6 Flash (High)", true)]
+    [InlineData("gemini-3.6-flash-high Gemini 3.6 Flash (High)", true)]
+    [InlineData("gemini-3.6-flash-high-malicious\tLookalike", false)]
+    [InlineData("prefix-gemini-3.6-flash-high", false)]
+    [InlineData("Gemini-3.6-Flash-High", false)]
+    public void ModelCatalog_RequiresExactFirstColumn(string output, bool expected)
+        => Assert.Equal(
+            expected,
+            DoctorService.AgyModelCatalog.ContainsExactModel(output, AgentRelayConstants.Model));
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory))

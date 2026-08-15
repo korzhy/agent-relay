@@ -14,7 +14,8 @@ public static class Program
     {
         if (args.Contains("models"))
         {
-            Console.WriteLine(AgentRelayConstants.Model);
+            Console.Error.WriteLine("Fetching available models...");
+            Console.WriteLine($"{AgentRelayConstants.Model}\tGemini 3.6 Flash (High)");
             return 0;
         }
 
