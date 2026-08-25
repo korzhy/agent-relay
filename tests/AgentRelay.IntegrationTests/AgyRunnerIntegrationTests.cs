@@ -190,7 +190,7 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_PauseBeforeDispatch_ReturnsPausedImmediately()
+    public async Task RunAsync_PauseBeforeDispatch_CancelsHandoffAndResumeAllowsReplacement()
     {
         var projectPath = Path.Combine(_tempDir, "proj_pause");
         Directory.CreateDirectory(projectPath);
@@ -210,6 +210,19 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
 
         Assert.Equal(RelayState.Paused, result.State);
         Assert.Null(result.ExitCode);
+        var cancelPath = Path.Combine(
+            projectPath, AgentRelayConstants.TransportDirectory, "cancel.json");
+        var cancel = await _files.ReadJsonAsync<CancelEnvelope>(cancelPath);
+        Assert.Equal(handoff.Control.HandoffId, cancel?.HandoffId);
+
+        await _runtimeStore.SetPausedAsync(registered, false, new SystemClock());
+        var ready = await _runtimeStore.ReadAsync(registered.Id);
+        Assert.Equal(RelayState.Ready, ready?.State);
+        Assert.Null(ready?.HandoffId);
+
+        var replacement = await _protocol.PublishAsync(
+            projectPath, new MissionRequest("Replacement", "Instructions", ["gate1"]));
+        Assert.NotEqual(handoff.Control.HandoffId, replacement.Control.HandoffId);
     }
 
     [Fact]
@@ -246,6 +259,31 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         var result = await runTask.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(RelayState.Paused, result.State);
         Assert.Contains("interrupted run", result.Detail, StringComparison.OrdinalIgnoreCase);
+        var cancel = await _files.ReadJsonAsync<CancelEnvelope>(Path.Combine(
+            projectPath, AgentRelayConstants.TransportDirectory, "cancel.json"));
+        Assert.Equal(handoff.Control.HandoffId, cancel?.HandoffId);
+    }
+
+    [Fact]
+    public async Task RunAsync_InvalidExecutable_ReturnsStalledInsteadOfLeavingRuntimeUnassigned()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_invalid_executable");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(
+            projectPath, new MissionRequest("Invalid executable", "Instructions", ["gate1"]));
+        var invalidExecutable = Path.Combine(_tempDir, "not-an-executable.exe");
+        await File.WriteAllTextAsync(invalidExecutable, "not a Windows executable");
+        var runner = new AgyRunner(_protocol, _runtimeStore, options: _fastOptions);
+
+        var result = await runner.RunAsync(registered, handoff, invalidExecutable);
+
+        Assert.Equal(RelayState.Stalled, result.State);
+        Assert.Contains("failed to start", result.Detail, StringComparison.OrdinalIgnoreCase);
+        var runtime = await _runtimeStore.ReadAsync(registered.Id);
+        Assert.Equal(RelayState.Stalled, runtime?.State);
+        Assert.Equal(handoff.Control.HandoffId, runtime?.HandoffId);
     }
 
     [Fact]

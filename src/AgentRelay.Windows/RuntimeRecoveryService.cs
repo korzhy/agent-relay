@@ -20,7 +20,7 @@ public sealed class RuntimeRecoveryService
     {
         var current = await _runtime.ReadAsync(project.Id, cancellationToken).ConfigureAwait(false)
             ?? RuntimeStore.NewReady(project, _clock.UtcNow);
-        if (File.Exists(_runtime.PausePath(project.Id)))
+        if (_runtime.IsPaused(project.Id))
         {
             current = current with
             {

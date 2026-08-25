@@ -97,8 +97,11 @@ workflow. `project trust` is an explicit consent operation: it authorizes Agent 
 resolve and start the newest Flash High executor in that workspace using
 `--mode accept-edits --dangerously-skip-permissions`. Drive roots, the user
 profile root, Windows, Program Files, ProgramData, and system directories are
-rejected. `resume` in the GUI re-enables future dispatch; it never silently
-replays an interrupted mission.
+rejected. `handoff cancel` cancels the current protocol handoff and arms a
+durable per-project pause, so later publish attempts are rejected before a new
+handoff is created. `handoff resume` (and Resume in the GUI) removes that pause
+and re-enables future dispatch; it never silently replays an interrupted or
+cancelled mission. After resume, publish the task again to create a new handoff.
 
 ## Automatic updates
 
@@ -137,6 +140,15 @@ same-directory temporary files, flush-to-disk, atomic replacement, SHA-256,
 workspace-relative paths, globally unique handoff/run IDs, stable mission IDs,
 strictly increasing revisions, and exact UTC timestamps. Published task,
 report, and review payloads are immutable.
+
+Lifecycle has two coordinated layers. Runtime `running`/`waiting` means a live
+runner; `stalled` and `quotaExhausted` are non-completions and the protocol
+handoff remains active, so a replacement publish is blocked until explicit
+cancel. `reportReady` is terminal because a validated report pointer exists.
+Cancel writes the matching terminal `cancel.json` and arms the runtime pause;
+while paused, publish exits before creating transport. Resume removes the pause
+and resets runtime to identity-free `ready`, but never dispatches an old
+handoff. A new publish is always required after resume.
 
 The dashboard maps `ready`, `running`, `waiting`, `stalled`,
 `quota exhausted`, `report ready`, and `paused` into a single mission view. It

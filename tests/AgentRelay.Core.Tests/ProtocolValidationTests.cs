@@ -98,6 +98,28 @@ public sealed class ProtocolValidationTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishAsync_StaleCancelPointerDoesNotMakeActiveHandoffTerminal()
+    {
+        var files = new AtomicFileStore();
+        var service = new ProtocolService(files);
+        var first = await service.PublishAsync(
+            _tempDir, new MissionRequest("First", "Do work", ["dotnet test"]));
+        var staleCancel = await service.CancelAsync(_tempDir, "First is cancelled.");
+        var second = await service.PublishAsync(
+            _tempDir, new MissionRequest("Second", "Do more work", ["dotnet test"]));
+        var cancelPath = Path.Combine(
+            _tempDir, AgentRelayConstants.TransportDirectory, "cancel.json");
+        await files.WriteJsonAsync(cancelPath, staleCancel, false);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PublishAsync(
+                _tempDir, new MissionRequest("Must block", "Do not publish", [])));
+
+        Assert.Contains(second.Control.HandoffId, exception.Message, StringComparison.Ordinal);
+        Assert.NotEqual(first.Control.HandoffId, second.Control.HandoffId);
+    }
+
+    [Fact]
     public async Task ValidateForDispatchAsync_RejectsImmutableTaskTampering()
     {
         var files = new AtomicFileStore();
@@ -110,6 +132,21 @@ public sealed class ProtocolValidationTests : IDisposable
         var exception = await Assert.ThrowsAsync<InvalidDataException>(
             () => service.ValidateForDispatchAsync(handoff));
         Assert.Contains("hash mismatch", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ValidateForDispatchAsync_RejectsCancelledHandoff()
+    {
+        var files = new AtomicFileStore();
+        var service = new ProtocolService(files);
+        var handoff = await service.PublishAsync(
+            _tempDir, new MissionRequest("Cancelled", "Do not run", ["dotnet test"]));
+        await service.CancelAsync(_tempDir, "Cancelled by user.");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ValidateForDispatchAsync(handoff));
+
+        Assert.Contains("cancelled", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

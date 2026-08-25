@@ -207,6 +207,21 @@ public sealed class ProtocolService
         PublishedHandoff handoff,
         CancellationToken cancellationToken = default)
     {
+        await ValidatePublishedPayloadsAsync(handoff, cancellationToken).ConfigureAwait(false);
+        var cancelPath = Path.Combine(
+            handoff.WorkspaceRoot, AgentRelayConstants.TransportDirectory, "cancel.json");
+        if (await HasMatchingCancellationAsync(
+                handoff.Control, cancelPath, cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                $"Handoff {handoff.Control.HandoffId} revision {handoff.Control.Revision} is cancelled.");
+        }
+    }
+
+    private async Task ValidatePublishedPayloadsAsync(
+        PublishedHandoff handoff,
+        CancellationToken cancellationToken)
+    {
         ValidateControl(handoff.Control, handoff.WorkspaceRoot);
         var currentControlHash = await AtomicFileStore.Sha256Async(handoff.ControlPath, cancellationToken)
             .ConfigureAwait(false);
@@ -232,12 +247,38 @@ public sealed class ProtocolService
         string workspaceRoot,
         string reason,
         CancellationToken cancellationToken = default)
+        => await CancelCoreAsync(
+            workspaceRoot, reason, null, cancellationToken).ConfigureAwait(false);
+
+    public async Task<CancelEnvelope> CancelAsync(
+        PublishedHandoff handoff,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        await ValidatePublishedPayloadsAsync(handoff, cancellationToken).ConfigureAwait(false);
+        return await CancelCoreAsync(
+            handoff.WorkspaceRoot, reason, handoff.Control, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<CancelEnvelope> CancelCoreAsync(
+        string workspaceRoot,
+        string reason,
+        ControlEnvelope? expected,
+        CancellationToken cancellationToken)
     {
         var workspace = WorkspaceSafety.Validate(workspaceRoot);
         var transport = Path.Combine(workspace, AgentRelayConstants.TransportDirectory);
         var control = await _files.ReadJsonAsync<ControlEnvelope>(
             Path.Combine(transport, "control.json"), cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("No handoff exists.");
+        if (expected is not null &&
+            (!string.Equals(control.HandoffId, expected.HandoffId, StringComparison.Ordinal) ||
+             control.Revision != expected.Revision ||
+             !string.Equals(control.RunAttemptId, expected.RunAttemptId, StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "The active handoff changed before cancellation could be recorded.");
+        }
         var cancel = new CancelEnvelope(
             AgentRelayConstants.ProtocolVersion,
             control.HandoffId,
@@ -354,7 +395,7 @@ public sealed class ProtocolService
         }
     }
 
-    private static async Task<bool> IsTerminalAsync(
+    private async Task<bool> IsTerminalAsync(
         ControlEnvelope control,
         string reportPointer,
         string cancelPointer,
@@ -362,7 +403,11 @@ public sealed class ProtocolService
     {
         if (File.Exists(cancelPointer))
         {
-            return true;
+            if (await HasMatchingCancellationAsync(
+                    control, cancelPointer, cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
         }
 
         if (!File.Exists(reportPointer))
@@ -376,6 +421,23 @@ public sealed class ProtocolService
         return report is not null &&
                string.Equals(report.HandoffId, control.HandoffId, StringComparison.Ordinal) &&
                report.Revision == control.Revision;
+    }
+
+    private async Task<bool> HasMatchingCancellationAsync(
+        ControlEnvelope control,
+        string cancelPointer,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(cancelPointer))
+        {
+            return false;
+        }
+        var cancel = await _files.ReadJsonAsync<CancelEnvelope>(
+            cancelPointer, cancellationToken).ConfigureAwait(false);
+        return cancel is not null &&
+               string.Equals(cancel.HandoffId, control.HandoffId, StringComparison.Ordinal) &&
+               string.Equals(cancel.MissionId, control.MissionId, StringComparison.Ordinal) &&
+               cancel.Revision == control.Revision;
     }
 
     private static void ValidateExecutor(ExecutorIdentity executor)

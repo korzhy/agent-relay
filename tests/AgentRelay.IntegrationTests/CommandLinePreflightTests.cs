@@ -112,6 +112,78 @@ public sealed class CommandLinePreflightTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(workspace, AgentRelayConstants.TransportDirectory)));
     }
 
+    [Fact]
+    public async Task CancelThenPublish_IsRejectedUntilResumeWithoutCreatingOrphanHandoff()
+    {
+        var home = Path.Combine(_root, "home-pause");
+        var local = Path.Combine(_root, "local-pause");
+        var workspace = Path.Combine(_root, "workspace-pause");
+        var skill = Path.Combine(_root, "skill-pause");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(local);
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(skill);
+        await File.WriteAllTextAsync(Path.Combine(skill, "SKILL.md"), "---\nname: test\n---\n");
+        var agyDirectory = Path.Combine(local, "agy", "bin");
+        Directory.CreateDirectory(agyDirectory);
+        foreach (var file in Directory.GetFiles(GetFakeAgyDirectory()))
+        {
+            File.Copy(file, Path.Combine(agyDirectory, Path.GetFileName(file)));
+        }
+        var task = Path.Combine(_root, "task-pause.md");
+        await File.WriteAllTextAsync(task, "fake-mode:pass");
+        var services = RelayServices.Create(
+            new AppPaths(home, local),
+            skill,
+            new NoOpClipboard(),
+            new FixedClock(DateTimeOffset.Parse("2026-07-28T08:00:00Z")));
+        await services.Policy.SetLevelAsync(services.Paths.CodexPolicyFile, DelegationLevel.High);
+        var project = await services.Projects.AddAsync(workspace);
+        project = await services.Projects.TrustAsync(project.Id);
+        var oldHandoff = await services.Protocol.PublishAsync(
+            workspace, new MissionRequest("Old stalled handoff", "Instructions", ["gate-1"]));
+        await services.Runtime.WriteAsync(new ProjectRuntimeState(
+            1,
+            project.Id,
+            RelayState.Stalled,
+            oldHandoff.Control.HandoffId,
+            oldHandoff.Control.MissionId,
+            oldHandoff.Control.Revision,
+            oldHandoff.Control.RunAttemptId,
+            null,
+            DateTimeOffset.Parse("2026-07-28T08:00:00Z"),
+            "Old runner stalled.",
+            oldHandoff.ControlHash,
+            null));
+
+        Assert.Equal(0, await CommandLine.RunAsync(
+            services, ["handoff", "cancel", "--project", workspace]));
+        var controlPath = Path.Combine(
+            workspace, AgentRelayConstants.TransportDirectory, "control.json");
+        var controlBeforeRejectedPublish = await services.Files.ReadJsonAsync<ControlEnvelope>(controlPath);
+
+        var pausedExit = await CommandLine.RunAsync(
+            services,
+            ["handoff", "publish", "--project", workspace, "--task", task, "--no-trust-prompt"]);
+
+        Assert.Equal(7, pausedExit);
+        var controlAfterRejectedPublish = await services.Files.ReadJsonAsync<ControlEnvelope>(controlPath);
+        Assert.Equal(controlBeforeRejectedPublish, controlAfterRejectedPublish);
+        Assert.True(services.Runtime.IsPaused(project.Id));
+
+        Assert.Equal(0, await CommandLine.RunAsync(
+            services, ["handoff", "resume", "--project", workspace]));
+        var resumed = await services.Runtime.ReadAsync(project.Id);
+        Assert.Equal(RelayState.Ready, resumed?.State);
+        Assert.Null(resumed?.HandoffId);
+
+        var replacementExit = await CommandLine.RunAsync(
+            services,
+            ["handoff", "publish", "--project", workspace, "--task", task, "--no-trust-prompt"]);
+        Assert.Equal(0, replacementExit);
+        Assert.Equal(RelayState.ReportReady, (await services.Runtime.ReadAsync(project.Id))?.State);
+    }
+
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; } = now;

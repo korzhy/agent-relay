@@ -77,10 +77,14 @@ public sealed class AgyRunner
         {
             throw new FileNotFoundException("agy.exe was not found.", agyExecutable);
         }
-        if (File.Exists(_runtime.PausePath(project.Id)))
+        if (_runtime.IsPaused(project.Id))
         {
-            return await FinishAsync(
-                project, handoff, RelayState.Paused, null, "Dispatch pause is armed.", null, cancellationToken)
+            return await FinishPausedAsync(
+                project,
+                handoff,
+                null,
+                "Dispatch pause is armed; the handoff was cancelled before agy.exe started.",
+                cancellationToken)
                 .ConfigureAwait(false);
         }
         await _protocol.ValidateForDispatchAsync(handoff, cancellationToken).ConfigureAwait(false);
@@ -113,7 +117,14 @@ public sealed class AgyRunner
             }
             if (!ownsMutex)
             {
-                throw new InvalidOperationException("Another runner already owns this project.");
+                return FinishAsync(
+                    project,
+                    handoff,
+                    RelayState.Stalled,
+                    null,
+                    "Another runner already owns this project; agy.exe was not started.",
+                    null,
+                    cancellationToken).GetAwaiter().GetResult();
             }
 
             return ExecuteOwnedAsync(
@@ -182,10 +193,25 @@ public sealed class AgyRunner
         watcher.Renamed += onRenamed;
         watcher.EnableRaisingEvents = true;
 
-        if (!process.Start())
+        try
+        {
+            if (!process.Start())
+            {
+                return await FinishAsync(
+                    project, handoff, RelayState.Stalled, null, "agy.exe failed to start.", null,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (
+            exception is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             return await FinishAsync(
-                project, handoff, RelayState.Stalled, null, "agy.exe failed to start.", null,
+                project,
+                handoff,
+                RelayState.Stalled,
+                null,
+                $"agy.exe failed to start: {exception.Message}",
+                null,
                 cancellationToken).ConfigureAwait(false);
         }
 
@@ -230,7 +256,7 @@ public sealed class AgyRunner
         while (!exitTask.IsCompleted)
         {
             await Task.Delay(_options.MonitorInterval, cancellationToken).ConfigureAwait(false);
-            if (File.Exists(_runtime.PausePath(project.Id)))
+            if (_runtime.IsPaused(project.Id))
             {
                 forcedReason = "Dispatch was paused; interrupted run has no completion claim.";
                 forcedState = RelayState.Paused;
@@ -264,8 +290,19 @@ public sealed class AgyRunner
         await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
         var exitCode = process.HasExited ? process.ExitCode : (int?)null;
 
+        if (forcedState is null && _runtime.IsPaused(project.Id))
+        {
+            forcedReason = "Dispatch was paused; interrupted run has no completion claim.";
+            forcedState = RelayState.Paused;
+        }
+
         if (forcedState is not null)
         {
+            if (forcedState == RelayState.Paused)
+            {
+                return await FinishPausedAsync(
+                    project, handoff, exitCode, forcedReason!, cancellationToken).ConfigureAwait(false);
+            }
             return await FinishAsync(
                 project, handoff, forcedState.Value, exitCode, forcedReason!, null, cancellationToken)
                 .ConfigureAwait(false);
@@ -322,13 +359,34 @@ public sealed class AgyRunner
                 detail, reviewPromptPath, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (
-            exception is InvalidDataException or JsonException or IOException)
+            exception is InvalidDataException or JsonException or IOException or InvalidOperationException)
         {
             return await FinishAsync(
                 project, handoff, RelayState.Stalled, exitCode,
                 $"Runner exited but report validation failed: {exception.Message}",
                 null, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task<RunnerResult> FinishPausedAsync(
+        RegisteredProject project,
+        PublishedHandoff handoff,
+        int? exitCode,
+        string detail,
+        CancellationToken cancellationToken)
+    {
+        await _protocol.CancelAsync(
+            handoff,
+            "Cancelled because the durable dispatch pause is armed.",
+            cancellationToken).ConfigureAwait(false);
+        return await FinishAsync(
+            project,
+            handoff,
+            RelayState.Paused,
+            exitCode,
+            detail,
+            null,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<RunnerResult> FinishAsync(

@@ -206,7 +206,18 @@ public static class CommandLine
                     throw new KeyNotFoundException($"Project is not registered: {projectKey}");
                 }
                 await CancelRunnerAsync(services, project, cancellationToken);
-                await services.Protocol.CancelAsync(project.Path, "Cancelled by user.", cancellationToken);
+                var cancelled = await services.Protocol.CancelAsync(
+                    project.Path, "Cancelled by user.", cancellationToken);
+                Console.WriteLine(JsonSerializer.Serialize(
+                    new
+                    {
+                        status = "paused",
+                        cancelled.HandoffId,
+                        cancelled.MissionId,
+                        cancelled.Revision,
+                        detail = "The active handoff is cancelled and future dispatch is blocked until resume."
+                    },
+                    JsonSupport.Options));
                 return 0;
             case "resume":
                 if (project is null)
@@ -215,6 +226,13 @@ public static class CommandLine
                 }
                 await services.Runtime.SetPausedAsync(
                     project, false, new SystemClock(), cancellationToken);
+                Console.WriteLine(JsonSerializer.Serialize(
+                    new
+                    {
+                        status = "ready",
+                        detail = "Future dispatch is enabled. Cancelled or interrupted handoffs are not restarted; publish a new handoff."
+                    },
+                    JsonSupport.Options));
                 return 0;
             case "publish":
                 var workspace = project?.Path ?? WorkspaceSafety.Validate(projectKey);
@@ -269,6 +287,19 @@ public static class CommandLine
                         return 5;
                     }
                     project = await services.Projects.TrustAsync(project.Id, cancellationToken);
+                }
+
+                if (services.Runtime.IsPaused(project.Id))
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(
+                        new
+                        {
+                            status = "dispatchPaused",
+                            projectId = project.Id,
+                            detail = "Durable dispatch pause is armed. Run handoff resume, then publish again; no handoff was created."
+                        },
+                        JsonSupport.Options));
+                    return 7;
                 }
 
                 var taskPath = Option(args, "--task")
@@ -481,8 +512,8 @@ public static class CommandLine
               activity set --project <id|path> --phase <phase> --summary <text> [--mission <id>] [--handoff <id>]
               handoff publish --project <id|path> --task <file> [--title <text>] [--mission <id>] [--gate <command> ...]
               handoff status --project <id|path>
-              handoff cancel --project <id|path>
-              handoff resume --project <id|path>
+              handoff cancel --project <id|path>  (cancel active handoff and pause future dispatch)
+              handoff resume --project <id|path>  (enable future dispatch; never replay a handoff)
               codex install|repair|remove
               update status
               update check

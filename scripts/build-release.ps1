@@ -2,7 +2,7 @@
 param(
   [string]$Configuration = "Release",
   [string]$Runtime = "win-x64",
-  [string]$Version = "0.3.2",
+  [string]$Version = "0.3.3",
   [string]$DotNet = "dotnet",
   [string]$Iscc = ""
 )
@@ -61,4 +61,8 @@ $artifact = Join-Path $output "AgentRelaySetup-x64.exe"
 if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
   throw "Expected installer was not created: $artifact"
 }
+
+$checksum = "$artifact.sha256"
+$hash = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash
+Set-Content -LiteralPath $checksum -Value "$hash  AgentRelaySetup-x64.exe" -Encoding ascii
 Get-FileHash -Algorithm SHA256 -LiteralPath $artifact

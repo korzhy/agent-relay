@@ -33,6 +33,9 @@ public sealed class RuntimeStore
     public string PausePath(string projectId)
         => Path.Combine(_paths.RuntimeDirectory, projectId, "paused.flag");
 
+    public bool IsPaused(string projectId)
+        => File.Exists(PausePath(projectId));
+
     public string ProjectLogDirectory(string projectId)
         => Path.Combine(_paths.LogsDirectory, projectId);
 
@@ -187,16 +190,22 @@ public sealed class RuntimeStore
 
         var current = await ReadAsync(project.Id, cancellationToken).ConfigureAwait(false)
             ?? NewReady(project, clock.UtcNow);
-        var next = current with
-        {
-            State = paused ? RelayState.Paused : RelayState.Ready,
-            ProcessId = null,
-            UpdatedAt = clock.UtcNow,
-            Detail = paused ? "Dispatch pause is armed." : "Dispatch is enabled."
-        };
+        var next = paused
+            ? current with
+            {
+                State = RelayState.Paused,
+                ProcessId = null,
+                RunnerPath = null,
+                UpdatedAt = clock.UtcNow,
+                Detail = "Dispatch pause is armed; future handoffs are rejected until resume."
+            }
+            : NewReady(project, clock.UtcNow) with
+            {
+                Detail = "Dispatch is enabled; paused or cancelled handoffs are not restarted."
+            };
         await WriteAsync(next, cancellationToken).ConfigureAwait(false);
         await AppendLogAsync(new ActionLogEntry(
-            clock.UtcNow, project.Id, paused ? "pause" : "resume", next.Detail), cancellationToken)
+            clock.UtcNow, project.Id, paused ? "pause" : "resume", next.Detail!), cancellationToken)
             .ConfigureAwait(false);
     }
 
