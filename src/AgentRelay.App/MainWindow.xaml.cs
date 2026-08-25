@@ -178,10 +178,10 @@ public partial class MainWindow : Window
     {
         ThresholdDescription.Text = level switch
         {
-            DelegationLevel.Off => "Flash запрещён. Sol выполняет работу самостоятельно.",
+            DelegationLevel.Off => "Gemini executor запрещён. Sol выполняет работу самостоятельно.",
             DelegationLevel.Low => "Только очевидная механическая работа с крупной ожидаемой экономией.",
             DelegationLevel.Medium => "Сбалансированная передача ограниченных и локально проверяемых задач.",
-            DelegationLevel.High => "Максимум подходящей работы передаётся Flash; финальная проверка остаётся у Sol.",
+            DelegationLevel.High => "Максимум подходящей работы передаётся Gemini executor; финальная проверка остаётся у Sol.",
             _ => string.Empty
         };
     }
@@ -242,7 +242,7 @@ public partial class MainWindow : Window
             if (!await CanInstallUpdateNowAsync())
             {
                 await _services.Updates.MarkDeferredAsync(
-                    state, "Обновление отложено до завершения активного Flash runner.");
+                    state, "Обновление отложено до завершения активного Gemini runner.");
                 StatusText.Text = $"Обновление {state.LatestVersion} загружено и отложено.";
                 return;
             }
@@ -360,12 +360,12 @@ public partial class MainWindow : Window
     private void RenderEmpty()
     {
         MissionTitleText.Text = "Нет активной делегации";
-        MissionMetaText.Text = "Sol использует Flash только когда порог и задача это оправдывают.";
+        MissionMetaText.Text = "Sol использует Gemini executor только когда порог и задача это оправдывают.";
         SolStatusText.Text = ThresholdOff.IsChecked == true
             ? "Делегирование выключено"
             : "Статус не подтверждён";
         SolDetailText.Text = ThresholdOff.IsChecked == true
-            ? "Глобальный порог OFF: Flash не будет запущен."
+            ? "Глобальный порог OFF: Gemini executor не будет запущен."
             : "Нет явной операционной фазы от текущей задачи Codex.";
         SolAgeText.Text = string.Empty;
         FlashStatusText.Text = "Не задействован";
@@ -401,7 +401,7 @@ public partial class MainWindow : Window
             SolStatusText.Text = mission.State.State == RelayState.ReportReady
                 ? "Ожидается проверка Sol"
                 : liveRunner
-                    ? "Ожидает отчёт Flash"
+                    ? "Ожидает отчёт Gemini"
                     : "Статус не подтверждён";
             SolDetailText.Text = liveRunner
                 ? "Sol передал ограниченную задачу и ожидает структурированный отчёт."
@@ -581,7 +581,7 @@ public partial class MainWindow : Window
         {
             SolActivityPhase.Evaluating => "Оценивает делегирование",
             SolActivityPhase.Delegating => "Передаёт задачу",
-            SolActivityPhase.WaitingForFlash => "Ожидает отчёт Flash",
+            SolActivityPhase.WaitingForFlash => "Ожидает отчёт Gemini",
             SolActivityPhase.Working => "Выполняет свою часть",
             SolActivityPhase.Reviewing => "Проверяет результат",
             SolActivityPhase.Integrating => "Интегрирует изменения",
@@ -595,9 +595,9 @@ public partial class MainWindow : Window
     private static string FormatLastAction(ActionLogEntry action, RelayState state)
         => action.Action switch
         {
-            "dispatch" => "Flash запущен с exact model.",
+            "dispatch" => "Gemini executor запущен с exact model.",
             "model-resolved" => $"Выбрана модель: {action.Detail}",
-            "complete" when state == RelayState.ReportReady => "Валидный отчёт Flash принят.",
+            "complete" when state == RelayState.ReportReady => "Валидный отчёт Gemini executor принят.",
             "complete" => "Внешнее выполнение завершилось без принятого отчёта.",
             "prompt-copy" => "Точный review prompt скопирован.",
             "prompt-copy-failed" => "Clipboard временно недоступен.",

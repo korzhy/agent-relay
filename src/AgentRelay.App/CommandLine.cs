@@ -311,7 +311,7 @@ public static class CommandLine
                 await services.Activity.SetAsync(
                     project,
                     SolActivityPhase.Delegating,
-                    $"Sol передаёт Flash ограниченную задачу: {title}.",
+                    $"Sol передаёт Gemini executor ограниченную задачу: {title}.",
                     missionId,
                     cancellationToken: cancellationToken);
                 var modelSelection = await services.Models.ResolveAsync(
@@ -332,7 +332,7 @@ public static class CommandLine
                 await services.Activity.SetAsync(
                     project,
                     SolActivityPhase.Delegating,
-                    $"Sol передал Flash ограниченную задачу: {title}.",
+                    $"Sol передал Gemini executor ограниченную задачу: {title}.",
                     handoff.Control.MissionId,
                     handoff.Control.HandoffId,
                     cancellationToken: cancellationToken);
@@ -345,7 +345,7 @@ public static class CommandLine
                         ? SolActivityPhase.Reviewing
                         : SolActivityPhase.Blocked,
                     result.State == RelayState.ReportReady
-                        ? "Отчёт Flash получен; Sol должен независимо проверить результат."
+                        ? "Отчёт Gemini executor получен; Sol должен независимо проверить результат."
                         : result.Detail,
                     handoff.Control.MissionId,
                     handoff.Control.HandoffId,
@@ -359,9 +359,9 @@ public static class CommandLine
 
     private static bool RequestWorkspaceTrust(string workspace)
         => System.Windows.MessageBox.Show(
-               $"Разрешить Agent Relay запускать Flash с правом редактирования только в этой папке?\n\n" +
+               $"Разрешить Agent Relay запускать Gemini executor с правом редактирования только в этой папке?\n\n" +
                $"{workspace}\n\n" +
-               "Будет использована последняя доступная Gemini Flash High; exact model будет " +
+               "Будет использована самая поздно обнаруженная доступная Gemini High; exact model будет " +
                "зафиксирована в handoff перед запуском с accept-edits. " +
                "Это однократное доверие конкретному workspace и не меняет глобальный порог делегирования.",
                "Agent Relay — доверие workspace",
@@ -463,7 +463,7 @@ public static class CommandLine
                 {
                     var deferred = await services.Updates.MarkDeferredAsync(
                         state,
-                        "Обновление отложено до завершения активного Flash runner.",
+                        "Обновление отложено до завершения активного Gemini runner.",
                         cancellationToken);
                     Console.WriteLine(JsonSerializer.Serialize(deferred, JsonSupport.Options));
                     return 7;

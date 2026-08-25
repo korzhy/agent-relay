@@ -20,7 +20,7 @@
             <StackPanel>
                 <TextBlock Text="AGENT RELAY" FontSize="28" FontWeight="Bold"
                            Foreground="{StaticResource AccentBrush}"/>
-                <TextBlock Text="Sol управляет передачей проверяемой работы внешнему Flash"
+                <TextBlock Text="Sol управляет передачей проверяемой работы внешнему Gemini executor"
                            Foreground="#AAB7CA" FontSize="13"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -43,7 +43,7 @@
                 <StackPanel>
                     <TextBlock Text="Порог внешнего делегирования" FontSize="18" FontWeight="SemiBold"/>
                     <TextBlock x:Name="ThresholdDescription"
-                               Text="Определяет, насколько охотно Sol отдаёт подходящую работу Flash."
+                               Text="Определяет, насколько охотно Sol отдаёт подходящую работу Gemini executor."
                                Foreground="#9EABBE" Margin="0,4,0,0"/>
                 </StackPanel>
                 <UniformGrid Grid.Column="1" Rows="1" Columns="4" Margin="20,0,0,0">
@@ -76,10 +76,10 @@
                     <StackPanel>
                         <TextBlock x:Name="MissionTitleText" Text="Нет активной делегации"
                                    FontSize="20" FontWeight="SemiBold"/>
-                        <TextBlock x:Name="MissionMetaText" Text="Sol использует Flash только когда порог и задача это оправдывают."
+                        <TextBlock x:Name="MissionMetaText" Text="Sol использует Gemini executor только когда порог и задача это оправдывают."
                                    Foreground="#91A0B5" Margin="0,5,0,0"/>
                     </StackPanel>
-                    <TextBlock Grid.Column="1" Text="Antigravity / latest Flash High"
+                    <TextBlock Grid.Column="1" Text="Antigravity / latest observed Gemini High"
                                Foreground="#8EA0BA" VerticalAlignment="Top" Margin="18,4,0,0"/>
                 </Grid>
 
@@ -119,7 +119,7 @@
                             <DockPanel>
                                 <Ellipse x:Name="FlashDot" Width="11" Height="11" Fill="#718096"
                                          Margin="0,3,9,0" VerticalAlignment="Top"/>
-                                <TextBlock Text="FLASH · EXECUTOR" FontSize="12" FontWeight="Bold"
+                                <TextBlock Text="GEMINI · EXECUTOR" FontSize="12" FontWeight="Bold"
                                            Foreground="#6BE3C2"/>
                             </DockPanel>
                             <TextBlock x:Name="FlashStatusText" Text="Не задействован"
@@ -136,7 +136,7 @@
 
                 <UniformGrid Grid.Row="2" Rows="1" Columns="5" Margin="0,0,0,16">
                     <TextBlock x:Name="DecisionStep" Text="1  Решение Sol" Style="{StaticResource MissionStepStyle}"/>
-                    <TextBlock x:Name="FlashStep" Text="2  Работа Flash" Style="{StaticResource MissionStepStyle}"/>
+                    <TextBlock x:Name="FlashStep" Text="2  Работа Gemini" Style="{StaticResource MissionStepStyle}"/>
                     <TextBlock x:Name="ReportStep" Text="3  Отчёт" Style="{StaticResource MissionStepStyle}"/>
                     <TextBlock x:Name="ReviewStep" Text="4  Проверка Sol" Style="{StaticResource MissionStepStyle}"/>
                     <TextBlock x:Name="IntegrateStep" Text="5  Интеграция" Style="{StaticResource MissionStepStyle}"/>

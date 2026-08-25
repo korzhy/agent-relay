@@ -1,8 +1,8 @@
 # Agent Relay
 
 Agent Relay is a local-first Windows companion for assisted implementation
-hand-offs between an open Codex task and Antigravity Gemini Flash. It launches
-and monitors Flash, validates its report, then notifies the user and copies an
+hand-offs between an open Codex task and an Antigravity Gemini High executor. It launches
+and monitors the executor, validates its report, then notifies the user and copies an
 exact review prompt for the already-open Codex task. It never starts
 `codex.exe` in the background.
 
@@ -15,10 +15,11 @@ can update automatically from this repository's GitHub Releases.
 | Setting | Values | Meaning |
 |---|---|---|
 | External delegation threshold / Порог внешнего делегирования | `off`, `low`, `medium`, `high` (default `medium`) | How readily Codex routes suitable implementation to an external agent. |
-| Flash executor | `Antigravity / latest gemini-*-flash-high` | Resolved through `agy models` before each new handoff; the exact model is then pinned in the protocol. |
+| Gemini executor | `Antigravity / latest-observed gemini-*-high` | Resolved through `agy models` before each new handoff; the exact model is then pinned in the protocol. |
 
 The `high` suffix in the selected model is not the delegation threshold.
-Agent Relay selects the highest numeric Flash High version advertised by `agy models`, caches the last verified model, and uses the built-in fallback only when discovery and cache are unavailable.
+Agent Relay records when each Gemini High model is first observed in `agy models` and selects the most recently observed model, regardless of family or numeric version. Models present when the discovery ledger is first created share one baseline timestamp, so numeric version is used only as a deterministic tie-breaker for that baseline. The last verified model is cached, and the built-in fallback is used only when discovery and cache are unavailable.
+`agy models` does not expose vendor release timestamps, so the ledger must be initialized before the future model appears. If multiple new models first appear between two Relay observations, they share one observation timestamp and use the same numeric tie-breaker.
 
 ## Quickstart
 
@@ -37,7 +38,7 @@ Agent Relay selects the highest numeric Flash High version advertised by `agy mo
    warning for that exact folder. Before approval the repository remains
    untouched and `agy.exe` is not started.
 6. The dashboard shows one current mission and confirmed operational phases
-   for Sol and Flash. A validated report copies the exact review prompt to the
+   for Sol and the Gemini executor. A validated report copies the exact review prompt to the
    clipboard once; Sol still independently validates hashes, gates, semantics,
    and final integration.
 
@@ -50,7 +51,7 @@ open or in the tray.
 Copy `AgentRelaySetup-x64.exe` to the second Windows 10/11 x64 PC and run it as
 the target user. Install Codex App and Antigravity separately, sign in to them
 through their normal UIs, and confirm `agy models` lists
-at least one `gemini-*-flash-high` model. Then run Agent Relay Doctor and **Install / repair
+at least one `gemini-*-high` model. Then run Agent Relay Doctor and **Install / repair
 Codex integration**.
 
 Version `0.2.0` and older cannot update themselves. Install `0.3.0` once on
@@ -94,7 +95,7 @@ AgentRelay.exe update apply
 
 The `project` commands are diagnostic/compatibility interfaces, not the normal
 workflow. `project trust` is an explicit consent operation: it authorizes Agent Relay to
-resolve and start the newest Flash High executor in that workspace using
+resolve and start the most recently observed available Gemini High executor in that workspace using
 `--mode accept-edits --dangerously-skip-permissions`. Drive roots, the user
 profile root, Windows, Program Files, ProgramData, and system directories are
 rejected. `handoff cancel` cancels the current protocol handoff and arms a
@@ -117,7 +118,7 @@ The updater:
 - streams to an app-owned `.partial` file with a 200 MB limit;
 - verifies length and SHA-256 before publication and again before execution;
 - refuses downgrade or same-version reinstall;
-- defers installation while any Flash runner is live;
+- defers installation while any Gemini runner is live;
 - runs the existing per-user Inno Setup installer silently, closes Relay
   cleanly, repairs the managed Codex integration idempotently, and relaunches
   Relay.
@@ -152,7 +153,7 @@ handoff. A new publish is always required after resume.
 
 The dashboard maps `ready`, `running`, `waiting`, `stalled`,
 `quota exhausted`, `report ready`, and `paused` into a single mission view. It
-also shows explicit Sol phases (`evaluating`, `delegating`, `waitingForFlash`,
+also shows explicit Sol phases (`evaluating`, `delegating`, legacy protocol name `waitingForFlash`,
 `working`, `reviewing`, `integrating`, `completed`, `blocked`) from local
 atomic activity state. A phase older than 15 minutes is labelled as last known,
 not as live model activity. FileSystemWatcher events,

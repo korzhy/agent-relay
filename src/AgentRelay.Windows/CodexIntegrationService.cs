@@ -220,7 +220,7 @@ public sealed class CodexIntegrationService
             - Allowed efforts are `medium`, `high`, and `xhigh`. Do not select `low`, `max`, or `ultra` unless the user explicitly changes this rule.
             - Effort changes never relax validation, security, or final-integration responsibilities.
             - Resolve external delegation through `$HOME\.codex\external-agent-delegation.json`.
-            - Delegation threshold and Flash model effort are separate settings. Relay resolves the newest available `gemini-*-flash-high` through `agy models` before each new handoff and records the exact model in the immutable protocol payloads.
+            - Delegation threshold and Gemini model effort are separate settings. Relay resolves the most recently observed available `gemini-*-high` through `agy models` before each new handoff and records the exact model in the immutable protocol payloads. Numeric version is only a deterministic tie-breaker for models first observed together.
             - When delegation is worthwhile, invoke `%LOCALAPPDATA%\Programs\AgentRelay\AgentRelay.exe`; the Relay GUI does not need to be running.
             - Record only explicit operational phases through Agent Relay `activity`; never present hidden reasoning or infer continuous Sol activity.
             - Relay may register a workspace locally, but Sol must never grant `project trust` on the user's behalf.

@@ -443,10 +443,10 @@ public sealed class ProtocolService
     private static void ValidateExecutor(ExecutorIdentity executor)
     {
         if (!string.Equals(executor.Provider, AgentRelayConstants.Provider, StringComparison.Ordinal) ||
-            !FlashModelIdentity.IsSupported(executor.Model))
+            !GeminiModelIdentity.IsSupported(executor.Model))
         {
             throw new InvalidDataException(
-                $"Executor must be {AgentRelayConstants.Provider} / gemini-<version>-flash-high.");
+                $"Executor must be {AgentRelayConstants.Provider} / gemini-<version>-<family>-high.");
         }
     }
 

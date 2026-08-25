@@ -33,7 +33,7 @@ public sealed class DoctorServiceTests : IDisposable
         Assert.Equal(Path.Combine(agyDirectory, "agy.exe"), report.AgyPath);
         Assert.True(report.Checks.Single(check => check.Name == "Codex App").Ready);
         Assert.True(report.Checks.Single(check => check.Name == "Antigravity CLI").Ready);
-        var executor = report.Checks.Single(check => check.Name == "Flash executor");
+        var executor = report.Checks.Single(check => check.Name == "Gemini executor");
         Assert.True(executor.Ready);
         Assert.Contains("gemini-3.7-flash-high", executor.Detail, StringComparison.Ordinal);
         Assert.False(report.Checks.Single(check => check.Name == "Codex integration").Ready);
@@ -52,17 +52,71 @@ public sealed class DoctorServiceTests : IDisposable
             AgyModelCatalog.ContainsExactModel(output, AgentRelayConstants.FallbackModel));
 
     [Fact]
-    public void ModelCatalog_SelectsNewestNumericFlashHigh()
+    public void ModelCatalog_InitialBaselineUsesNumericVersionAsTieBreaker()
     {
         const string output = """
             gemini-3.6-flash-high Gemini 3.6 Flash (High)
             gemini-3.10-flash-high Gemini 3.10 Flash (High)
             gemini-3.7-flash-medium Gemini 3.7 Flash (Medium)
             gemini-3.7-flash-high Gemini 3.7 Flash (High)
+            gemini-3.1-pro-high Gemini 3.1 Pro (High)
             claude-sonnet-4-6 Claude Sonnet
             """;
 
-        Assert.Equal("gemini-3.10-flash-high", AgyModelCatalog.SelectLatestFlashHigh(output));
+        var models = AgyModelCatalog.ParseModels(output);
+        var discovery = AgyModelCatalog.RecordObservedModels(
+            null, models, DateTimeOffset.Parse("2026-08-25T10:00:00Z"), out var changed);
+
+        Assert.True(changed);
+        Assert.Equal(
+            "gemini-3.10-flash-high",
+            AgyModelCatalog.SelectMostRecentlyObservedHigh(models, discovery));
+    }
+
+    [Fact]
+    public void ModelCatalog_LaterObservedProWinsDespiteLowerNumericVersion()
+    {
+        var baseline = new[] { "gemini-3.7-flash-high", "gemini-3.1-pro-high" };
+        var initial = AgyModelCatalog.RecordObservedModels(
+            null,
+            baseline,
+            DateTimeOffset.Parse("2026-08-25T10:00:00Z"),
+            out _);
+        var septemberCatalog = baseline.Append("gemini-3.5-pro-high").ToArray();
+        var updated = AgyModelCatalog.RecordObservedModels(
+            initial,
+            septemberCatalog,
+            DateTimeOffset.Parse("2026-09-15T10:00:00Z"),
+            out var changed);
+
+        Assert.True(changed);
+        Assert.Equal(
+            "gemini-3.5-pro-high",
+            AgyModelCatalog.SelectMostRecentlyObservedHigh(septemberCatalog, updated));
+        Assert.Equal(
+            DateTimeOffset.Parse("2026-09-15T10:00:00Z"),
+            updated.Models.Single(entry => entry.Model == "gemini-3.5-pro-high").FirstSeenAt);
+
+        var unchanged = AgyModelCatalog.RecordObservedModels(
+            updated,
+            septemberCatalog,
+            DateTimeOffset.Parse("2026-10-01T10:00:00Z"),
+            out var changedAgain);
+        Assert.False(changedAgain);
+        Assert.Equal(
+            DateTimeOffset.Parse("2026-09-15T10:00:00Z"),
+            unchanged.Models.Single(entry => entry.Model == "gemini-3.5-pro-high").FirstSeenAt);
+    }
+
+    [Theory]
+    [InlineData("gemini-3.7-flash-high", true)]
+    [InlineData("gemini-3.5-pro-high", true)]
+    [InlineData("gemini-3.5-pro-medium", false)]
+    [InlineData("gemini-3.5-pro-high-malicious", false)]
+    [InlineData("claude-4.5-sonnet-high", false)]
+    public void GeminiModelIdentity_AcceptsOnlyExactGeminiHigh(string model, bool expected)
+    {
+        Assert.Equal(expected, GeminiModelIdentity.IsSupported(model));
     }
 
     [Fact]
@@ -80,10 +134,32 @@ public sealed class DoctorServiceTests : IDisposable
         Assert.Equal(ModelSelectionSource.Catalog, discovered.Source);
         Assert.Equal("gemini-3.7-flash-high", discovered.Executor.Model);
         Assert.True(File.Exists(paths.ModelSelectionFile));
+        Assert.True(File.Exists(paths.ModelDiscoveryFile));
 
         var cached = await service.ResolveAsync(Path.Combine(local, "missing-agy.exe"));
         Assert.Equal(ModelSelectionSource.Cache, cached.Source);
         Assert.Equal(discovered.Executor, cached.Executor);
+    }
+
+    [Fact]
+    public async Task ModelSelection_CorruptDiscoveryFailsSafeToVerifiedCacheWithoutOverwrite()
+    {
+        var home = Path.Combine(_tempDirectory, "corrupt-home");
+        var local = Path.Combine(_tempDirectory, "corrupt-local");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(local);
+        var paths = new AppPaths(home, local);
+        var service = new AgyModelSelectionService(paths, new AtomicFileStore());
+        var agyPath = Path.Combine(GetFakeAgyOutput(), "agy.exe");
+        var discovered = await service.ResolveAsync(agyPath);
+        const string corrupt = "{ not valid json";
+        await File.WriteAllTextAsync(paths.ModelDiscoveryFile, corrupt);
+
+        var result = await service.ResolveAsync(agyPath);
+
+        Assert.Equal(ModelSelectionSource.Cache, result.Source);
+        Assert.Equal(discovered.Executor, result.Executor);
+        Assert.Equal(corrupt, await File.ReadAllTextAsync(paths.ModelDiscoveryFile));
     }
 
     [Fact]

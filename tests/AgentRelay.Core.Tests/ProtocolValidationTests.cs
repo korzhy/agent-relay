@@ -87,7 +87,7 @@ public sealed class ProtocolValidationTests : IDisposable
     {
         var files = new AtomicFileStore();
         var service = new ProtocolService(files);
-        var executor = new ExecutorIdentity(AgentRelayConstants.Provider, "gemini-3.7-flash-high");
+        var executor = new ExecutorIdentity(AgentRelayConstants.Provider, "gemini-3.5-pro-high");
 
         var handoff = await service.PublishAsync(
             _tempDir, new MissionRequest("Latest", "Do work", ["dotnet test"]), executor);

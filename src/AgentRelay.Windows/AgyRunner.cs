@@ -239,7 +239,7 @@ public sealed class AgyRunner
             await _activity.SetAsync(
                 project,
                 SolActivityPhase.WaitingForFlash,
-                "Задача передана Flash; Sol ожидает структурированный отчёт.",
+                "Задача передана Gemini executor; Sol ожидает структурированный отчёт.",
                 handoff.Control.MissionId,
                 handoff.Control.HandoffId,
                 "Agent Relay runner",

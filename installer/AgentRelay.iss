@@ -1,6 +1,6 @@
 #define MyAppName "Agent Relay"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.3"
+  #define MyAppVersion "0.3.4"
 #endif
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish"

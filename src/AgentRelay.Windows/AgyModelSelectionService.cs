@@ -16,6 +16,42 @@ public sealed record ModelSelectionState(
     string Model,
     DateTimeOffset VerifiedAt);
 
+public sealed record ModelDiscoveryEntry(string Model, DateTimeOffset FirstSeenAt);
+
+public sealed record ModelDiscoveryState(
+    int SchemaVersion,
+    IReadOnlyList<ModelDiscoveryEntry> Models)
+{
+    public const int CurrentSchemaVersion = 1;
+
+    public void Validate()
+    {
+        if (SchemaVersion != CurrentSchemaVersion)
+        {
+            throw new InvalidDataException($"Unsupported model discovery schemaVersion: {SchemaVersion}");
+        }
+
+        if (Models is null || Models.Count == 0)
+        {
+            throw new InvalidDataException("Model discovery history is empty.");
+        }
+
+        var unique = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in Models)
+        {
+            if (!GeminiModelIdentity.IsSupported(entry.Model) || entry.FirstSeenAt == default)
+            {
+                throw new InvalidDataException("Model discovery history contains an invalid entry.");
+            }
+
+            if (!unique.Add(entry.Model))
+            {
+                throw new InvalidDataException($"Duplicate model discovery entry: {entry.Model}");
+            }
+        }
+    }
+}
+
 public sealed record ModelSelectionResult(
     ExecutorIdentity Executor,
     ModelSelectionSource Source,
@@ -41,24 +77,51 @@ public sealed class AgyModelSelectionService
         try
         {
             var catalog = await ReadCatalogAsync(agyPath, cancellationToken).ConfigureAwait(false);
-            var model = AgyModelCatalog.SelectLatestFlashHigh(catalog)
+            var available = AgyModelCatalog.ParseModels(catalog)
+                .Where(GeminiModelIdentity.IsSupported)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (available.Length == 0)
+            {
+                throw new InvalidDataException(
+                    "agy models returned no supported gemini-<version>-<family>-high model.");
+            }
+
+            var observedAt = _clock.UtcNow;
+            var discovery = await ReadDiscoveryAsync(cancellationToken).ConfigureAwait(false);
+            var updatedDiscovery = AgyModelCatalog.RecordObservedModels(
+                discovery, available, observedAt, out var changed);
+            var model = AgyModelCatalog.SelectMostRecentlyObservedHigh(available, updatedDiscovery)
                         ?? throw new InvalidDataException(
-                            "agy models returned no supported gemini-*-flash-high model.");
+                            "Model discovery history does not cover the available Gemini High catalog.");
+
+            if (changed)
+            {
+                await _files.WriteJsonAsync(
+                    _paths.ModelDiscoveryFile,
+                    updatedDiscovery,
+                    createBackup: File.Exists(_paths.ModelDiscoveryFile),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             var state = new ModelSelectionState(
-                1, AgentRelayConstants.Provider, model, _clock.UtcNow);
+                1, AgentRelayConstants.Provider, model, observedAt);
             await _files.WriteJsonAsync(
                 _paths.ModelSelectionFile,
                 state,
                 createBackup: File.Exists(_paths.ModelSelectionFile),
                 cancellationToken).ConfigureAwait(false);
+            var firstSeenAt = updatedDiscovery.Models.Single(entry => entry.Model == model).FirstSeenAt;
             return new ModelSelectionResult(
                 new ExecutorIdentity(state.Provider, state.Model),
                 ModelSelectionSource.Catalog,
-                $"Latest available Flash High model resolved from agy models: {model}.");
+                $"Most recently observed available Gemini High model: {model} " +
+                $"(first seen {firstSeenAt:O}).");
         }
         catch (Exception exception) when (
             exception is IOException or InvalidDataException or InvalidOperationException or
-                System.ComponentModel.Win32Exception or OperationCanceledException)
+                System.ComponentModel.Win32Exception or OperationCanceledException or
+                System.Text.Json.JsonException)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var cached = await ReadValidCacheAsync(cancellationToken).ConfigureAwait(false);
@@ -112,6 +175,14 @@ public sealed class AgyModelSelectionService
         return stdout;
     }
 
+    private async Task<ModelDiscoveryState?> ReadDiscoveryAsync(CancellationToken cancellationToken)
+    {
+        var discovery = await _files.ReadJsonAsync<ModelDiscoveryState>(
+            _paths.ModelDiscoveryFile, cancellationToken).ConfigureAwait(false);
+        discovery?.Validate();
+        return discovery;
+    }
+
     private async Task<ModelSelectionState?> ReadValidCacheAsync(CancellationToken cancellationToken)
     {
         try
@@ -122,11 +193,12 @@ public sealed class AgyModelSelectionService
             {
                 SchemaVersion: 1,
                 Provider: AgentRelayConstants.Provider
-            } && FlashModelIdentity.IsSupported(cached.Model)
+            } && GeminiModelIdentity.IsSupported(cached.Model)
                 ? cached
                 : null;
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException)
+        catch (Exception exception) when (
+            exception is IOException or InvalidDataException or System.Text.Json.JsonException)
         {
             return null;
         }
@@ -152,19 +224,62 @@ public static class AgyModelCatalog
         return models;
     }
 
-    public static string? SelectLatestFlashHigh(string output)
-        => ParseModels(output)
-            .Select(model => new
+    public static ModelDiscoveryState RecordObservedModels(
+        ModelDiscoveryState? existing,
+        IEnumerable<string> availableModels,
+        DateTimeOffset observedAt,
+        out bool changed)
+    {
+        existing?.Validate();
+        var entries = existing?.Models.ToList() ?? [];
+        var known = entries.Select(entry => entry.Model).ToHashSet(StringComparer.Ordinal);
+        foreach (var model in availableModels
+                     .Where(GeminiModelIdentity.IsSupported)
+                     .Distinct(StringComparer.Ordinal)
+                     .Order(StringComparer.Ordinal))
+        {
+            if (known.Add(model))
             {
-                Model = model,
-                Valid = FlashModelIdentity.TryGetVersion(model, out var version),
-                Version = version
+                entries.Add(new ModelDiscoveryEntry(model, observedAt));
+            }
+        }
+
+        changed = existing is null || entries.Count != existing.Models.Count;
+        var result = new ModelDiscoveryState(
+            ModelDiscoveryState.CurrentSchemaVersion,
+            entries.OrderBy(entry => entry.Model, StringComparer.Ordinal).ToArray());
+        result.Validate();
+        return result;
+    }
+
+    public static string? SelectMostRecentlyObservedHigh(
+        IEnumerable<string> availableModels,
+        ModelDiscoveryState discovery)
+    {
+        discovery.Validate();
+        var firstSeen = discovery.Models.ToDictionary(
+            entry => entry.Model, entry => entry.FirstSeenAt, StringComparer.Ordinal);
+        return availableModels
+            .Distinct(StringComparer.Ordinal)
+            .Select(model =>
+            {
+                var validVersion = GeminiModelIdentity.TryGetVersion(model, out var version);
+                var observed = firstSeen.TryGetValue(model, out var firstSeenAt);
+                return new
+                {
+                    Model = model,
+                    Valid = validVersion && observed,
+                    Version = version,
+                    FirstSeenAt = firstSeenAt
+                };
             })
             .Where(item => item.Valid)
-            .OrderByDescending(item => item.Version)
+            .OrderByDescending(item => item.FirstSeenAt)
+            .ThenByDescending(item => item.Version)
             .ThenByDescending(item => item.Model, StringComparer.Ordinal)
             .Select(item => item.Model)
             .FirstOrDefault();
+    }
 
     public static bool ContainsExactModel(string output, string exactModel)
     {

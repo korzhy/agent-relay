@@ -17,6 +17,7 @@ public static class Program
             Console.Error.WriteLine("Fetching available models...");
             Console.WriteLine("gemini-3.7-flash-high\tGemini 3.7 Flash (High)");
             Console.WriteLine($"{AgentRelayConstants.FallbackModel}\tGemini 3.6 Flash (High)");
+            Console.WriteLine("gemini-3.1-pro-high\tGemini 3.1 Pro (High)");
             return 0;
         }
 

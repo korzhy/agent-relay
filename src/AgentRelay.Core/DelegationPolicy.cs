@@ -49,10 +49,12 @@ public sealed record DelegationPolicy(
 
         var supportedSelector = string.Equals(
             PreferredExecutor.Model, AgentRelayConstants.ModelSelector, StringComparison.Ordinal);
+        var legacySelector = string.Equals(
+            PreferredExecutor.Model, AgentRelayConstants.LegacyFlashModelSelector, StringComparison.Ordinal);
         var legacyPinnedModel = string.Equals(
             PreferredExecutor.Model, AgentRelayConstants.FallbackModel, StringComparison.Ordinal);
         if (!string.Equals(PreferredExecutor.Provider, AgentRelayConstants.Provider, StringComparison.Ordinal) ||
-            (!supportedSelector && !legacyPinnedModel))
+            (!supportedSelector && !legacySelector && !legacyPinnedModel))
         {
             throw new InvalidDataException(
                 $"Executor policy must be {AgentRelayConstants.Provider} / {AgentRelayConstants.ModelSelector}.");
@@ -132,6 +134,10 @@ public sealed class PolicyService
         if (string.Equals(
                 policy.PreferredExecutor.Model,
                 AgentRelayConstants.FallbackModel,
+                StringComparison.Ordinal) ||
+            string.Equals(
+                policy.PreferredExecutor.Model,
+                AgentRelayConstants.LegacyFlashModelSelector,
                 StringComparison.Ordinal))
         {
             policy = policy with { PreferredExecutor = new ExecutorPreference() };

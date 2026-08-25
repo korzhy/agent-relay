@@ -19,6 +19,7 @@ public sealed record AppPaths(string HomeDirectory, string LocalAppDataDirectory
     public string LogsDirectory => Path.Combine(DataRoot, "logs");
     public string RuntimeDirectory => Path.Combine(DataRoot, "runtime");
     public string ModelSelectionFile => Path.Combine(DataRoot, "model-selection.json");
+    public string ModelDiscoveryFile => Path.Combine(DataRoot, "model-discovery.json");
     public string UpdatesDirectory => Path.Combine(DataRoot, "updates");
     public string UpdateSettingsFile => Path.Combine(UpdatesDirectory, "settings.json");
     public string UpdateStateFile => Path.Combine(UpdatesDirectory, "state.json");

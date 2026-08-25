@@ -48,9 +48,9 @@ public sealed class DoctorService
         else
         {
             checks.Add(new DoctorCheck(
-                "Flash executor",
+                "Gemini executor",
                 false,
-                "Cannot resolve the latest Flash High model without agy.exe."));
+                "Cannot resolve the most recently observed Gemini High model without agy.exe."));
         }
 
         checks.Add(CheckCodexIntegration());
@@ -137,13 +137,13 @@ public sealed class DoctorService
             var resolved = await _models.ResolveAsync(agyPath, cancellationToken).ConfigureAwait(false);
             var fromCatalog = resolved.Source == ModelSelectionSource.Catalog;
             return new DoctorCheck(
-                "Flash executor",
+                "Gemini executor",
                 fromCatalog,
                 $"{resolved.Executor.Provider} / {resolved.Executor.Model} · {resolved.Detail}");
         }
         catch (Exception exception)
         {
-            return new DoctorCheck("Flash executor", false, exception.Message);
+            return new DoctorCheck("Gemini executor", false, exception.Message);
         }
     }
 

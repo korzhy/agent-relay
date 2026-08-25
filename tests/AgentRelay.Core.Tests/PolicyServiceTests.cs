@@ -128,4 +128,21 @@ public sealed class PolicyServiceTests : IDisposable
 
         Assert.Throws<InvalidDataException>(() => policy.Validate());
     }
+
+    [Fact]
+    public async Task GetAsync_NormalizesLegacyFlashSelectorToCurrentSelector()
+    {
+        var globalPath = Path.Combine(_tempDir, "legacy-policy.json");
+        var legacy = DelegationPolicy.CreateDefault() with
+        {
+            PreferredExecutor = new ExecutorPreference(
+                AgentRelayConstants.Provider,
+                AgentRelayConstants.LegacyFlashModelSelector)
+        };
+        await _files.WriteJsonAsync(globalPath, legacy);
+
+        var loaded = await _service.GetAsync(globalPath);
+
+        Assert.Equal(AgentRelayConstants.ModelSelector, loaded.PreferredExecutor.Model);
+    }
 }

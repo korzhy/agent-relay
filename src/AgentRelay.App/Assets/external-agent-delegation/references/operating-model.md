@@ -3,7 +3,7 @@
 Compare external specification + wait + review + likely correction cost with
 direct Codex implementation. Delegate only when the active threshold is met.
 
-Flash is useful for bounded mechanical edits, repetitive contract alignment,
+An external Gemini executor is useful for bounded mechanical edits, repetitive contract alignment,
 fixture/test generation, and exact build repairs. It is not an authority for
 architecture, security, quota semantics, concurrency, lifecycle, visual truth,
 or release readiness.

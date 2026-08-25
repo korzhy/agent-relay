@@ -1,6 +1,6 @@
 ---
 name: external-agent-delegation
-description: Route bounded, locally verifiable implementation through Agent Relay to the latest available Antigravity Gemini Flash High model when the active delegation threshold makes that cheaper than direct Codex work; retain Sol architecture, security, review, and integration authority.
+description: Route bounded, locally verifiable implementation through Agent Relay to the most recently observed available Antigravity Gemini High model when the active delegation threshold makes that cheaper than direct Codex work; retain Sol architecture, security, review, and integration authority.
 ---
 
 # External Agent Delegation
@@ -12,18 +12,20 @@ instruction first, then this global policy, then safe default `low`. The Relay
 GUI setting is global for every workspace; do not let a project file override
 global `off`.
 
-- `off`: do not consider or invoke Flash.
+- `off`: do not consider or invoke the external Gemini executor.
 - `low`: delegate only mechanical, unambiguous work with about 2x expected
   Codex-effort savings.
 - `medium`: allow a coherent 30–90 minute bounded implementation with exact
   contracts and local gates; allow one correction.
-- `high`: prefer Flash for locally provable implementation; transfer to Codex
+- `high`: prefer the external Gemini executor for locally provable implementation; transfer to Codex
   after the same root cause repeats twice.
 
-Threshold is separate from model effort. Agent Relay resolves the newest
-available `gemini-*-flash-high` via `agy models` before each new handoff, then
-records that exact executor in the immutable task and control payloads. Do not
-bypass Relay's resolver or substitute another model family or effort.
+Threshold is separate from model effort. Agent Relay resolves the most recently
+observed available `gemini-*-high` via `agy models` before each new handoff, then
+records that exact executor in the immutable task and control payloads. First-observed
+date is authoritative across model families; numeric version only breaks a tie between
+models first observed together. Do not bypass Relay's resolver or substitute a non-Gemini
+model or a lower effort.
 
 ## Dispatch through Agent Relay
 
@@ -43,7 +45,7 @@ running.
 6. Treat crash, invalid/missing report, stalled, paused, and quota exhausted as
    non-completion. Do not use a model call to poll unchanged state.
 
-Relay automatically records `delegating`, `waitingForFlash`, and the validated
+Relay automatically records `delegating`, the legacy protocol phase `waitingForFlash`, and the validated
 report transition. Use `activity set` for Sol's real subsequent phases:
 `reviewing`, `integrating`, `completed`, or `blocked`. Do not claim continuous
 Sol activity when no explicit operational phase exists.
