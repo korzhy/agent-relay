@@ -6,9 +6,10 @@ and monitors the executor, validates its report, then notifies the user and copi
 exact review prompt for the already-open Codex task. It never starts
 `codex.exe` in the background.
 
-MVP target: Windows 10/11 x64, .NET 8 WPF, self-contained per-user install.
-There is no backend, account, telemetry, or secret storage. Stable releases
-can update automatically from this repository's GitHub Releases.
+Target: Windows 10/11 x64, .NET 8 WPF, self-contained per-user install.
+There is no backend or telemetry. Managed account metadata is local; OAuth
+credentials are protected by Windows Credential Manager. Stable releases can
+update automatically from this repository's GitHub Releases.
 
 ## Two settings that must not be confused
 
@@ -28,16 +29,19 @@ Agent Relay records when each Gemini High model is first observed in `agy models
    `%LOCALAPPDATA%\Programs\AgentRelay`.
 2. Launch Agent Relay once and choose the global delegation threshold:
    `OFF`, `LOW`, `MEDIUM`, or `HIGH`. It is saved immediately.
-3. The installer creates the idempotent managed block in
+3. Open **Аккаунты**, give the account a local label, and complete the visible
+   official `agy` OAuth. Only PRO and ULTRA accounts pass the fail-closed tier
+   check. Agent Relay never scans or imports Antigravity Tools accounts.
+4. The installer creates the idempotent managed block in
    `$HOME\.codex\AGENTS.md`, the global policy, and the
    `external-agent-delegation` skill. Foreign AGENTS content is preserved.
-4. Continue working in Codex normally. Sol reads the threshold and invokes
+5. Continue working in Codex normally. Sol reads the threshold and invokes
    `AgentRelay.exe` itself when a bounded hand-off is worthwhile; the Relay GUI
    need not be running.
-5. At the first real hand-off for a workspace, approve the single trust
+6. At the first real hand-off for a workspace, approve the single trust
    warning for that exact folder. Before approval the repository remains
    untouched and `agy.exe` is not started.
-6. The dashboard shows one current mission and confirmed operational phases
+7. The dashboard shows one current mission and confirmed operational phases
    for Sol and the Gemini executor. A validated report copies the exact review prompt to the
    clipboard once; Sol still independently validates hashes, gates, semantics,
    and final integration.
@@ -73,6 +77,13 @@ The same `AgentRelay.exe` serves GUI and CLI:
 ```text
 AgentRelay.exe doctor --json
 AgentRelay.exe quota --json
+AgentRelay.exe account list
+AgentRelay.exe account add --label "Work Pro" --activate
+AgentRelay.exe account activate --id <id>
+AgentRelay.exe account refresh --id <id>
+AgentRelay.exe account refresh --all
+AgentRelay.exe account remove --id <id>
+AgentRelay.exe account settings --rotation-threshold 10
 AgentRelay.exe policy get
 AgentRelay.exe policy set medium
 AgentRelay.exe project add C:\work\project
@@ -162,15 +173,28 @@ the runner; no model calls poll unchanged files. A crash or missing/invalid
 report is not completion. Quota exhaustion appears only when actual process
 exit/output matches a known exhaustion pattern.
 
-The header and `quota [--json]` command use the last observed percentage of
-general Antigravity prompt credits when a compatible local
-`Quota update received` log is available. The value includes its source,
-timestamp, and fresh/stale status. Agent Relay extracts only the numeric credit
-fields and timestamp; it does not read process tokens or call Antigravity's
-private localhost API. This percentage is not a model-specific guarantee for
-the exact model recorded in the handoff. A stale snapshot never shows a percentage in the main
-header; its old value and timestamp remain available in diagnostics. Without a
-compatible source the value is explicitly `N/A`, never invented.
+The header and `quota [--json]` command show the active managed account. Quota
+is read through the official `agy --output-format json --print /usage` command;
+the effective Gemini remainder is the lower of `gemini-weekly` and `gemini-5h`.
+The configurable rotation threshold is 1–50% (default 10%) and is strict:
+exactly 10% remains usable at the default threshold. Before publication Relay
+refreshes the active account and, when rotation is needed, candidates; selection
+uses highest remainder, least recently used, then stable account ID.
+
+Tier eligibility is obtained through a narrow `loadCodeAssist` adapter because
+official `/usage` does not expose the subscription tier. PRO and ULTRA are
+eligible; FREE, restricted, unknown, and endpoint failures are excluded
+fail-closed with a diagnostic. Access and refresh credentials are separate
+Windows Credential Manager entries. `%LOCALAPPDATA%\AgentRelay\accounts` contains
+only IDs, labels, email, eligibility, quota, timestamps, and settings. OAuth
+client credentials are not embedded or copied from Antigravity Tools.
+
+Only one `agy` operation/runner may run globally across Relay projects. The
+global lease is acquired before account/model preflight and before handoff
+publication, so `runnerBusy` creates no protocol payload. A healthy runner is
+not interrupted merely for crossing the threshold. Confirmed quota/rate-limit
+output cancels the old revision, rotates to an unused eligible account, resolves
+`agy models` again, and publishes a new revision/runAttempt for the same mission.
 
 A report must claim `PASS`, `FAIL`, `BLOCKED`, or `UNVERIFIED` and list changed
 files, commands and exit codes, first failure, unavailable dependencies, and

@@ -18,6 +18,7 @@ public static class CommandLine
         {
             "doctor" => await DoctorAsync(services, args, cancellationToken),
             "quota" => await QuotaAsync(services, args, cancellationToken),
+            "account" => await AccountAsync(services, args, cancellationToken),
             "policy" => await PolicyAsync(services, args, cancellationToken),
             "project" => await ProjectAsync(services, args, cancellationToken),
             "activity" => await ActivityAsync(services, args, cancellationToken),
@@ -27,6 +28,72 @@ public static class CommandLine
             "--help" or "-h" or "help" => Help(),
             _ => throw new ArgumentException($"Unknown command: {args[0]}")
         };
+    }
+
+    private static async Task<int> AccountAsync(
+        RelayServices services,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        Require(args, 2, "account list|add|activate|refresh|remove|settings");
+        var agyPath = services.Doctor.ResolveAgyPath();
+        switch (args[1].ToLowerInvariant())
+        {
+            case "list":
+                Console.WriteLine(JsonSerializer.Serialize(
+                    await services.Accounts.ListAsync(cancellationToken), JsonSupport.Options));
+                return 0;
+            case "add":
+                var label = Option(args, "--label") ??
+                            throw new ArgumentException("--label <label> is required.");
+                Console.WriteLine(JsonSerializer.Serialize(
+                    await services.Accounts.AddAsync(
+                        label, agyPath,
+                        args.Contains("--activate", StringComparer.OrdinalIgnoreCase), cancellationToken),
+                    JsonSupport.Options));
+                return 0;
+            case "activate":
+                Console.WriteLine(JsonSerializer.Serialize(
+                    await services.Accounts.ActivateAsync(
+                        Option(args, "--id") ?? throw new ArgumentException("--id <id> is required."),
+                        agyPath, cancellationToken), JsonSupport.Options));
+                return 0;
+            case "refresh":
+                var all = args.Contains("--all", StringComparer.OrdinalIgnoreCase);
+                var id = Option(args, "--id");
+                if (!all && id is null)
+                {
+                    throw new ArgumentException("account refresh requires --id <id> or --all.");
+                }
+                Console.WriteLine(JsonSerializer.Serialize(
+                    await services.Accounts.RefreshAsync(agyPath, id, all, cancellationToken),
+                    JsonSupport.Options));
+                return 0;
+            case "remove":
+                await services.Accounts.RemoveAsync(
+                    Option(args, "--id") ?? throw new ArgumentException("--id <id> is required."),
+                    cancellationToken);
+                Console.WriteLine("{\"status\":\"removed\"}");
+                return 0;
+            case "settings":
+                var value = Option(args, "--rotation-threshold");
+                if (value is null)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(
+                        await services.Accounts.GetSettingsAsync(cancellationToken), JsonSupport.Options));
+                    return 0;
+                }
+                if (!int.TryParse(value, out var threshold))
+                {
+                    throw new ArgumentException("--rotation-threshold must be an integer from 1 to 50.");
+                }
+                Console.WriteLine(JsonSerializer.Serialize(
+                    await services.Accounts.SetThresholdAsync(threshold, cancellationToken),
+                    JsonSupport.Options));
+                return 0;
+            default:
+                throw new ArgumentException($"Unknown account action: {args[1]}");
+        }
     }
 
     private static async Task<int> ActivityAsync(
@@ -86,7 +153,8 @@ public static class CommandLine
         IReadOnlyList<string> args,
         CancellationToken cancellationToken)
     {
-        var snapshot = await services.Quota.ReadAsync(cancellationToken);
+        var registry = await services.Accounts.ListAsync(cancellationToken);
+        var snapshot = registry.Accounts.FirstOrDefault(account => account.Id == registry.ActiveAccountId);
         if (args.Contains("--json", StringComparer.OrdinalIgnoreCase))
         {
             Console.WriteLine(JsonSerializer.Serialize(snapshot, JsonSupport.Options));
@@ -94,11 +162,11 @@ public static class CommandLine
         else
         {
             Console.WriteLine(
-                snapshot.HasPercentage
-                    ? $"Prompt-credit quota: {snapshot.Detail} [{snapshot.Source}]"
-                    : $"Prompt-credit quota: N/A — {snapshot.Detail}");
+                snapshot?.Quota is not null
+                    ? $"Gemini quota: {snapshot.Quota.RemainingPercent}% [{snapshot.Label}]"
+                    : "Gemini quota: N/A — no active managed account with a checked quota.");
         }
-        return snapshot.HasPercentage ? 0 : 3;
+        return snapshot?.Quota is not null ? 0 : 3;
     }
 
     private static async Task<int> DoctorAsync(
@@ -235,6 +303,7 @@ public static class CommandLine
                     JsonSupport.Options));
                 return 0;
             case "publish":
+            {
                 var workspace = project?.Path ?? WorkspaceSafety.Validate(projectKey);
                 var policy = await services.Policy.GetAsync(
                     services.Paths.CodexPolicyFile, cancellationToken: cancellationToken);
@@ -308,37 +377,88 @@ public static class CommandLine
                 var instructions = await File.ReadAllTextAsync(taskPath, cancellationToken);
                 var gates = Options(args, "--gate");
                 var missionId = Option(args, "--mission");
+                using var runnerLease = GlobalAgyLease.TryAcquire();
+                if (runnerLease is null)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(
+                        new
+                        {
+                            status = "runnerBusy",
+                            detail = "Another Agent Relay runner owns agy; no handoff was created."
+                        }, JsonSupport.Options));
+                    return 11;
+                }
+
+                var agyPath = services.Doctor.ResolveAgyPath();
+                var attemptedAccounts = new HashSet<string>(StringComparer.Ordinal);
+                var account = await services.Accounts.PreflightAsync(
+                    agyPath, attemptedAccounts, cancellationToken);
+                if (account.Status != "ready" || account.Account is null)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(account, JsonSupport.Options));
+                    return account.Status == "accountRequired" ? 9 : 10;
+                }
                 await services.Activity.SetAsync(
                     project,
                     SolActivityPhase.Delegating,
                     $"Sol передаёт Gemini executor ограниченную задачу: {title}.",
                     missionId,
                     cancellationToken: cancellationToken);
-                var modelSelection = await services.Models.ResolveAsync(
-                    services.Doctor.ResolveAgyPath(), cancellationToken);
-                await services.Runtime.AppendLogAsync(
-                    new ActionLogEntry(
-                        DateTimeOffset.UtcNow,
-                        project.Id,
-                        "model-resolved",
-                        $"model={modelSelection.Executor.Model} source={modelSelection.Source}; " +
-                        modelSelection.Detail),
-                    cancellationToken);
-                var handoff = await services.Protocol.PublishAsync(
-                    project.Path,
-                    new MissionRequest(title, instructions, gates, missionId),
-                    modelSelection.Executor,
-                    cancellationToken);
-                await services.Activity.SetAsync(
-                    project,
-                    SolActivityPhase.Delegating,
-                    $"Sol передал Gemini executor ограниченную задачу: {title}.",
-                    handoff.Control.MissionId,
-                    handoff.Control.HandoffId,
-                    cancellationToken: cancellationToken);
-                Console.WriteLine(JsonSerializer.Serialize(handoff.Control, JsonSupport.Options));
-                var result = await services.CreateRunner().RunAsync(
-                    project, handoff, services.Doctor.ResolveAgyPath(), cancellationToken);
+                RunnerResult result;
+                PublishedHandoff handoff;
+                var currentInstructions = instructions;
+                do
+                {
+                    attemptedAccounts.Add(account.Account.Id);
+                    var modelSelection = await services.Models.ResolveAsync(agyPath, cancellationToken);
+                    await services.Runtime.AppendLogAsync(
+                        new ActionLogEntry(
+                            DateTimeOffset.UtcNow,
+                            project.Id,
+                            "model-resolved",
+                            $"account={account.Account.Id} model={modelSelection.Executor.Model} " +
+                            $"source={modelSelection.Source}; {modelSelection.Detail}"),
+                        cancellationToken);
+                    handoff = await services.Protocol.PublishAsync(
+                        project.Path,
+                        new MissionRequest(title, currentInstructions, gates, missionId),
+                        modelSelection.Executor,
+                        cancellationToken);
+                    missionId = handoff.Control.MissionId;
+                    await services.Activity.SetAsync(
+                        project,
+                        SolActivityPhase.Delegating,
+                        $"Sol передал Gemini executor ограниченную задачу: {title}.",
+                        handoff.Control.MissionId,
+                        handoff.Control.HandoffId,
+                        cancellationToken: cancellationToken);
+                    Console.WriteLine(JsonSerializer.Serialize(handoff.Control, JsonSupport.Options));
+                    result = await services.CreateRunner().RunAsync(
+                        project, handoff, agyPath, cancellationToken, runnerLease);
+                    if (result.State != RelayState.QuotaExhausted)
+                    {
+                        break;
+                    }
+
+                    await services.Protocol.CancelAsync(
+                        handoff,
+                        "Runner reported a confirmed quota/rate-limit failure; rotating managed account.",
+                        cancellationToken);
+                    account = await services.Accounts.PreflightAsync(
+                        agyPath, attemptedAccounts, cancellationToken);
+                    if (account.Status != "ready" || account.Account is null)
+                    {
+                        result = result with
+                        {
+                            Detail = "QuotaExhausted: no unused eligible managed account remains. " +
+                                     account.Detail
+                        };
+                        break;
+                    }
+                    currentInstructions = instructions + Environment.NewLine + Environment.NewLine +
+                        "This is a quota-retry revision. Inspect and preserve existing working-tree changes " +
+                        "from the interrupted attempt, verify incomplete work, and continue safely.";
+                } while (true);
                 await services.Activity.SetAsync(
                     project,
                     result.State == RelayState.ReportReady
@@ -352,6 +472,7 @@ public static class CommandLine
                     cancellationToken: cancellationToken);
                 Console.WriteLine(JsonSerializer.Serialize(result, JsonSupport.Options));
                 return result.State == RelayState.ReportReady ? 0 : 4;
+            }
             default:
                 throw new ArgumentException($"Unknown handoff action: {args[1]}");
         }
@@ -504,6 +625,12 @@ public static class CommandLine
             Agent Relay
               doctor [--json]
               quota [--json]
+              account list
+              account add --label <label> [--activate]
+              account activate --id <id>
+              account refresh (--id <id>|--all)
+              account remove --id <id>
+              account settings [--rotation-threshold <1..50>]
               policy get [--project <path>]
               policy set off|low|medium|high
               project add|remove|trust <path-or-id>

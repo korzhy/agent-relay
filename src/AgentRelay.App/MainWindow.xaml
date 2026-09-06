@@ -24,6 +24,8 @@
                            Foreground="#AAB7CA" FontSize="13"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="AccountsButton" Content="Аккаунты"
+                        Style="{StaticResource HeaderButtonStyle}" Click="Accounts_Click"/>
                 <Border x:Name="QuotaChip" Style="{StaticResource HeaderChipStyle}"
                         ToolTipService.ShowDuration="30000">
                     <TextBlock x:Name="QuotaText" Text="Квота: проверка…"/>

@@ -73,7 +73,8 @@ public static class Program
 
         const string modePrefix = "fake-mode:";
         var mode = task.Instructions.StartsWith(modePrefix, StringComparison.OrdinalIgnoreCase)
-            ? task.Instructions[modePrefix.Length..].Trim()
+            ? task.Instructions[modePrefix.Length..]
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)[0].Trim()
             : "pass";
         if (mode.Equals("crash", StringComparison.OrdinalIgnoreCase))
         {
@@ -81,6 +82,11 @@ public static class Program
             return 1;
         }
         if (mode.Equals("quota", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine($"quota exhausted: rate limit exceeded for {task.Executor.Model}");
+            return 1;
+        }
+        if (mode.Equals("quota_then_pass", StringComparison.OrdinalIgnoreCase) && task.Revision == 1)
         {
             Console.Error.WriteLine($"quota exhausted: rate limit exceeded for {task.Executor.Model}");
             return 1;

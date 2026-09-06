@@ -18,6 +18,10 @@ public sealed record AppPaths(string HomeDirectory, string LocalAppDataDirectory
     public string ProjectsFile => Path.Combine(DataRoot, "projects.json");
     public string LogsDirectory => Path.Combine(DataRoot, "logs");
     public string RuntimeDirectory => Path.Combine(DataRoot, "runtime");
+    public string AccountsDirectory => Path.Combine(DataRoot, "accounts");
+    public string AccountsFile => Path.Combine(AccountsDirectory, "accounts.json");
+    public string AccountSettingsFile => Path.Combine(AccountsDirectory, "settings.json");
+    public string AccountRecoveryFile => Path.Combine(AccountsDirectory, "recovery.json");
     public string ModelSelectionFile => Path.Combine(DataRoot, "model-selection.json");
     public string ModelDiscoveryFile => Path.Combine(DataRoot, "model-discovery.json");
     public string UpdatesDirectory => Path.Combine(DataRoot, "updates");

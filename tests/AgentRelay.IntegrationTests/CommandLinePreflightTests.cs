@@ -88,12 +88,16 @@ public sealed class CommandLinePreflightTests : IDisposable
         var task = Path.Combine(_root, "task-high.md");
         await File.WriteAllTextAsync(task, "fake-mode:pass");
         var clipboard = new RecordingClipboard();
+        var credentials = new FakeCredentialStore();
         var services = RelayServices.Create(
             new AppPaths(home, local),
             skill,
             clipboard,
-            new FixedClock(DateTimeOffset.Parse("2026-07-28T08:00:00Z")));
+            new FixedClock(DateTimeOffset.Parse("2026-07-28T08:00:00Z")),
+            credentialStore: credentials,
+            agyAccountClient: new FakeAgyAccountClient(credentials));
         await services.Policy.SetLevelAsync(services.Paths.CodexPolicyFile, DelegationLevel.High);
+        await services.Accounts.AddAsync("Test Pro", services.Doctor.ResolveAgyPath(), true);
         var project = await services.Projects.AddAsync(workspace);
         await services.Projects.TrustAsync(project.Id);
 
@@ -110,6 +114,71 @@ public sealed class CommandLinePreflightTests : IDisposable
         Assert.Equal(SolActivityPhase.Reviewing, (await services.Activity.GetAsync(project.Id))?.Phase);
         Assert.Equal(1, clipboard.WriteCount);
         Assert.True(Directory.Exists(Path.Combine(workspace, AgentRelayConstants.TransportDirectory)));
+    }
+
+    [Fact]
+    public async Task Publish_WithoutManagedAccount_ReturnsAccountRequiredWithoutHandoff()
+    {
+        var home = Path.Combine(_root, "home-account-required");
+        var local = Path.Combine(_root, "local-account-required");
+        var workspace = Path.Combine(_root, "workspace-account-required");
+        var skill = Path.Combine(_root, "skill-account-required");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(local);
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(skill);
+        await File.WriteAllTextAsync(Path.Combine(skill, "SKILL.md"), "---\nname: test\n---\n");
+        var task = Path.Combine(_root, "task-account-required.md");
+        await File.WriteAllTextAsync(task, "fake-mode:pass");
+        var credentials = new FakeCredentialStore();
+        var services = RelayServices.Create(
+            new AppPaths(home, local), skill, new NoOpClipboard(),
+            new FixedClock(DateTimeOffset.Parse("2026-09-06T08:00:00Z")),
+            credentialStore: credentials,
+            agyAccountClient: new FakeAgyAccountClient(credentials));
+        await services.Policy.SetLevelAsync(services.Paths.CodexPolicyFile, DelegationLevel.High);
+        var project = await services.Projects.AddAsync(workspace);
+        await services.Projects.TrustAsync(project.Id);
+
+        var exit = await CommandLine.RunAsync(services,
+            ["handoff", "publish", "--project", workspace, "--task", task, "--no-trust-prompt"]);
+
+        Assert.Equal(9, exit);
+        Assert.False(Directory.Exists(Path.Combine(workspace, AgentRelayConstants.TransportDirectory)));
+    }
+
+    [Fact]
+    public async Task Publish_WhenGlobalRunnerBusy_ReturnsElevenWithoutHandoff()
+    {
+        var home = Path.Combine(_root, "home-busy");
+        var local = Path.Combine(_root, "local-busy");
+        var workspace = Path.Combine(_root, "workspace-busy");
+        var skill = Path.Combine(_root, "skill-busy");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(local);
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(skill);
+        await File.WriteAllTextAsync(Path.Combine(skill, "SKILL.md"), "---\nname: test\n---\n");
+        var task = Path.Combine(_root, "task-busy.md");
+        await File.WriteAllTextAsync(task, "fake-mode:pass");
+        var credentials = new FakeCredentialStore();
+        var services = RelayServices.Create(
+            new AppPaths(home, local), skill, new NoOpClipboard(),
+            new FixedClock(DateTimeOffset.Parse("2026-09-06T08:00:00Z")),
+            credentialStore: credentials,
+            agyAccountClient: new FakeAgyAccountClient(credentials));
+        await services.Policy.SetLevelAsync(services.Paths.CodexPolicyFile, DelegationLevel.High);
+        await services.Accounts.AddAsync("Pro", services.Doctor.ResolveAgyPath(), true);
+        var project = await services.Projects.AddAsync(workspace);
+        await services.Projects.TrustAsync(project.Id);
+        using var lease = GlobalAgyLease.TryAcquire();
+        Assert.NotNull(lease);
+
+        var exit = await CommandLine.RunAsync(services,
+            ["handoff", "publish", "--project", workspace, "--task", task, "--no-trust-prompt"]);
+
+        Assert.Equal(11, exit);
+        Assert.False(Directory.Exists(Path.Combine(workspace, AgentRelayConstants.TransportDirectory)));
     }
 
     [Fact]
@@ -132,12 +201,16 @@ public sealed class CommandLinePreflightTests : IDisposable
         }
         var task = Path.Combine(_root, "task-pause.md");
         await File.WriteAllTextAsync(task, "fake-mode:pass");
+        var credentials = new FakeCredentialStore();
         var services = RelayServices.Create(
             new AppPaths(home, local),
             skill,
             new NoOpClipboard(),
-            new FixedClock(DateTimeOffset.Parse("2026-07-28T08:00:00Z")));
+            new FixedClock(DateTimeOffset.Parse("2026-07-28T08:00:00Z")),
+            credentialStore: credentials,
+            agyAccountClient: new FakeAgyAccountClient(credentials));
         await services.Policy.SetLevelAsync(services.Paths.CodexPolicyFile, DelegationLevel.High);
+        await services.Accounts.AddAsync("Test Pro", services.Doctor.ResolveAgyPath(), true);
         var project = await services.Projects.AddAsync(workspace);
         project = await services.Projects.TrustAsync(project.Id);
         var oldHandoff = await services.Protocol.PublishAsync(
@@ -184,6 +257,51 @@ public sealed class CommandLinePreflightTests : IDisposable
         Assert.Equal(RelayState.ReportReady, (await services.Runtime.ReadAsync(project.Id))?.State);
     }
 
+    [Fact]
+    public async Task QuotaFailure_RotatesAccountAndPublishesNewMissionRevision()
+    {
+        var home = Path.Combine(_root, "home-retry");
+        var local = Path.Combine(_root, "local-retry");
+        var workspace = Path.Combine(_root, "workspace-retry");
+        var skill = Path.Combine(_root, "skill-retry");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(local);
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(skill);
+        await File.WriteAllTextAsync(Path.Combine(skill, "SKILL.md"), "---\nname: test\n---\n");
+        var agyDirectory = Path.Combine(local, "agy", "bin");
+        Directory.CreateDirectory(agyDirectory);
+        foreach (var file in Directory.GetFiles(GetFakeAgyDirectory()))
+        {
+            File.Copy(file, Path.Combine(agyDirectory, Path.GetFileName(file)));
+        }
+        var task = Path.Combine(_root, "task-retry.md");
+        await File.WriteAllTextAsync(task, "fake-mode:quota_then_pass");
+        var credentials = new FakeCredentialStore();
+        var agy = new FakeAgyAccountClient(credentials);
+        var services = RelayServices.Create(
+            new AppPaths(home, local), skill, new NoOpClipboard(),
+            new FixedClock(DateTimeOffset.Parse("2026-09-06T08:00:00Z")),
+            credentialStore: credentials, agyAccountClient: agy);
+        await services.Policy.SetLevelAsync(services.Paths.CodexPolicyFile, DelegationLevel.High);
+        await services.Accounts.AddAsync("First", services.Doctor.ResolveAgyPath(), true);
+        await services.Accounts.AddAsync("Second", services.Doctor.ResolveAgyPath(), false);
+        var project = await services.Projects.AddAsync(workspace);
+        await services.Projects.TrustAsync(project.Id);
+
+        var exit = await CommandLine.RunAsync(services,
+            ["handoff", "publish", "--project", workspace, "--task", task, "--no-trust-prompt"]);
+
+        Assert.Equal(0, exit);
+        var control = await services.Files.ReadJsonAsync<ControlEnvelope>(Path.Combine(
+            workspace, AgentRelayConstants.TransportDirectory, "control.json"));
+        Assert.Equal(2, control?.Revision);
+        Assert.NotNull(control?.ParentHandoffId);
+        Assert.Equal(RelayState.ReportReady, (await services.Runtime.ReadAsync(project.Id))?.State);
+        Assert.All((await services.Accounts.ListAsync()).Accounts,
+            account => Assert.NotNull(account.LastUsedAt));
+    }
+
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; } = now;
@@ -203,6 +321,38 @@ public sealed class CommandLinePreflightTests : IDisposable
         {
             WriteCount++;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeCredentialStore : ICredentialStore
+    {
+        private readonly Dictionary<string, byte[]> _values = new(StringComparer.Ordinal);
+        public byte[]? Read(string target) => _values.TryGetValue(target, out var value) ? value.ToArray() : null;
+        public void Write(string target, byte[] credential) => _values[target] = credential.ToArray();
+        public void Delete(string target) => _values.Remove(target);
+    }
+
+    private sealed class FakeAgyAccountClient(FakeCredentialStore credentials) : IAgyAccountClient
+    {
+        private int _counter;
+
+        public Task AuthorizeAsync(string agyPath, CancellationToken cancellationToken = default)
+        {
+            _counter++;
+            credentials.Write(AccountManager.AgyCredentialTarget, System.Text.Encoding.UTF8.GetBytes(
+                $"{{\"token\":{{\"access_token\":\"access-{_counter}\",\"refresh_token\":\"refresh-{_counter}\"}}," +
+                $"\"email\":\"test-{_counter}@example.com\"}}"));
+            return Task.CompletedTask;
+        }
+
+        public Task<AgyAccountInspection> InspectAsync(
+            string agyPath, byte[] credential, CancellationToken cancellationToken = default)
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(credential);
+            return Task.FromResult(new AgyAccountInspection(
+                new GeminiQuotaSnapshot(100, 100, DateTimeOffset.Parse("2026-07-28T08:00:00Z")),
+                document.RootElement.GetProperty("email").GetString(),
+                "PRO", AccountEligibility.Eligible, null));
         }
     }
 

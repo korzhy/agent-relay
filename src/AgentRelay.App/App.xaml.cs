@@ -8,6 +8,14 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
         var services = RelayServices.Create();
+        try
+        {
+            await services.Accounts.RecoverAsync().ConfigureAwait(true);
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"Account recovery failed: {exception.Message}");
+        }
         if (e.Args.Length > 0)
         {
             ConsoleHost.Attach();

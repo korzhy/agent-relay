@@ -120,6 +120,13 @@ public partial class MainWindow : Window
         window.ShowDialog();
     }
 
+    private void Accounts_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new AccountsWindow(_services) { Owner = this };
+        window.ShowDialog();
+        _ = RefreshQuotaAsync();
+    }
+
     private async void ContextAction_Click(object sender, RoutedEventArgs e)
     {
         if (_currentMission is null)
@@ -198,20 +205,27 @@ public partial class MainWindow : Window
 
     private async Task RefreshQuotaAsync()
     {
-        var quota = await _services.Quota.ReadAsync();
-        if (quota.Freshness == QuotaFreshness.Fresh && quota.RemainingPercentage is int remaining)
+        var registry = await _services.Accounts.ListAsync();
+        var account = registry.Accounts.FirstOrDefault(item => item.Id == registry.ActiveAccountId);
+        if (account?.Quota is { } quota)
         {
-            QuotaText.Text = $"Квота: {remaining}%";
-            QuotaText.Foreground = remaining <= 10 ? WarningBrush : ActiveBrush;
+            var settings = await _services.Accounts.GetSettingsAsync();
+            QuotaText.Text = $"{account.Label}: {quota.RemainingPercent}%";
+            QuotaText.Foreground = quota.RemainingPercent < settings.RotationThreshold
+                ? WarningBrush : ActiveBrush;
+            QuotaChip.ToolTip =
+                $"Managed account: {account.Label}\nTier: {account.Tier ?? "unknown"}\n" +
+                $"Weekly: {quota.WeeklyPercent}% · 5h: {quota.FiveHourPercent}%\n" +
+                $"Checked: {quota.CheckedAt:yyyy-MM-dd HH:mm} UTC";
         }
         else
         {
-            QuotaText.Text = "Квота: нет свежих данных";
+            QuotaText.Text = registry.Accounts.Count == 0
+                ? "Аккаунт не настроен"
+                : "Нет активной квоты";
             QuotaText.Foreground = IdleBrush;
+            QuotaChip.ToolTip = account?.Diagnostic ?? "Добавьте и активируйте managed PRO/ULTRA account.";
         }
-        QuotaChip.ToolTip = quota.RemainingPercentage is int lastKnown
-            ? $"{quota.Source}\nПоследний известный снимок: {lastKnown}% · {quota.ObservedAt:yyyy-MM-dd HH:mm} UTC\n{quota.Detail}"
-            : $"{quota.Source}\n{quota.Detail}";
     }
 
     private async Task CheckForUpdatesAsync()

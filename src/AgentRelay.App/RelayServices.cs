@@ -21,6 +21,7 @@ public sealed class RelayServices
         AgyModelSelectionService models,
         CodexIntegrationService codex,
         AntigravityQuotaService quota,
+        AccountManager accounts,
         UpdateService updates)
     {
         Paths = paths;
@@ -36,6 +37,7 @@ public sealed class RelayServices
         Models = models;
         Codex = codex;
         Quota = quota;
+        Accounts = accounts;
         Updates = updates;
     }
 
@@ -52,6 +54,7 @@ public sealed class RelayServices
     public AgyModelSelectionService Models { get; }
     public CodexIntegrationService Codex { get; }
     public AntigravityQuotaService Quota { get; }
+    public AccountManager Accounts { get; }
     public UpdateService Updates { get; }
 
     public static RelayServices Create()
@@ -71,7 +74,9 @@ public sealed class RelayServices
         IClock? clock = null,
         HttpClient? updateHttp = null,
         IUpdateInstallerLauncher? updateLauncher = null,
-        string? currentVersion = null)
+        string? currentVersion = null,
+        ICredentialStore? credentialStore = null,
+        IAgyAccountClient? agyAccountClient = null)
     {
         var files = new AtomicFileStore();
         clock ??= new SystemClock();
@@ -80,6 +85,13 @@ public sealed class RelayServices
         var delivery = new ReviewPromptDeliveryService(
             paths, files, clipboard, clock);
         var models = new AgyModelSelectionService(paths, files, clock);
+        var resolvedCredentialStore = credentialStore ?? new WindowsCredentialStore();
+        var accounts = new AccountManager(
+            paths,
+            files,
+            resolvedCredentialStore,
+            agyAccountClient ?? new AgyAccountClient(clock: clock, credentials: resolvedCredentialStore),
+            clock);
         return new RelayServices(
             paths,
             files,
@@ -98,6 +110,7 @@ public sealed class RelayServices
                 skillSource,
                 clock),
             AntigravityQuotaService.FromEnvironment(clock),
+            accounts,
             new UpdateService(
                 paths,
                 files,

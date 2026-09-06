@@ -59,7 +59,8 @@ public sealed class AgyRunner
         RegisteredProject project,
         PublishedHandoff handoff,
         string agyExecutable,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        GlobalAgyLease? globalLease = null)
     {
         if (project.TrustedAt is null)
         {
@@ -89,12 +90,28 @@ public sealed class AgyRunner
         }
         await _protocol.ValidateForDispatchAsync(handoff, cancellationToken).ConfigureAwait(false);
 
-        return await Task.Factory.StartNew(
-                () => RunWithMutex(project, handoff, agyExecutable, cancellationToken),
-                cancellationToken,
-                TaskCreationOptions.LongRunning,
-                TaskScheduler.Default)
-            .ConfigureAwait(false);
+        var ownsGlobalLease = globalLease is null;
+        globalLease ??= GlobalAgyLease.TryAcquire();
+        if (globalLease is null)
+        {
+            return await FinishAsync(
+                project, handoff, RelayState.Stalled, null,
+                "runnerBusy: another Agent Relay runner owns agy.", null, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        try
+        {
+            return await Task.Factory.StartNew(
+                    () => RunWithMutex(project, handoff, agyExecutable, cancellationToken),
+                    cancellationToken,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ownsGlobalLease) globalLease.Dispose();
+        }
     }
 
     private RunnerResult RunWithMutex(
