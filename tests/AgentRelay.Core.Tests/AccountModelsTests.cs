@@ -22,6 +22,19 @@ public sealed class AccountModelsTests
     }
 
     [Fact]
+    public void UsageParser_FallsBackToStructuredJsonResponseTable()
+    {
+        var snapshot = AgyUsageParser.Parse(
+            """
+            {"status":"SUCCESS","response":"Gemini Models\tWeekly Limit Remaining\t88%\t2026-09-11T00:00:00Z\nGemini Models\tFive Hour Limit Remaining\t9%\t2026-09-06T12:00:00Z\n"}
+            """, DateTimeOffset.Parse("2026-09-06T08:00:00Z"));
+
+        Assert.Equal(88, snapshot.WeeklyPercent);
+        Assert.Equal(9, snapshot.FiveHourPercent);
+        Assert.Equal(9, snapshot.RemainingPercent);
+    }
+
+    [Fact]
     public void Threshold_IsStrictlyBelowBoundary()
     {
         var account = Account("a", 10);

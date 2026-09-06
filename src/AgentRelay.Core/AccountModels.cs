@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace AgentRelay.Core;
 
@@ -134,7 +135,12 @@ public static class AgyUsageParser
         var fiveHour = buckets.FirstOrDefault(item => item.Name == "gemini-5h");
         if (weekly.Name is null || fiveHour.Name is null)
         {
-            throw new InvalidDataException("agy /usage did not return gemini-weekly and gemini-5h buckets.");
+            if (TryParseResponse(document.RootElement, checkedAt, out var responseSnapshot))
+            {
+                return responseSnapshot;
+            }
+            throw new InvalidDataException(
+                "agy /usage did not return Gemini quota buckets or a compatible response table.");
         }
 
         return new GeminiQuotaSnapshot(
@@ -185,6 +191,32 @@ public static class AgyUsageParser
 
     private static int ToPercent(double fraction)
         => Math.Clamp((int)Math.Floor(fraction * 100d + 0.0000001d), 0, 100);
+
+    private static bool TryParseResponse(
+        JsonElement root,
+        DateTimeOffset checkedAt,
+        out GeminiQuotaSnapshot snapshot)
+    {
+        snapshot = null!;
+        if (!root.TryGetProperty("response", out var responseElement) ||
+            responseElement.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+        var response = responseElement.GetString() ?? string.Empty;
+        var weekly = Regex.Match(
+            response, @"Gemini Models\s+Weekly Limit Remaining\s+(\d{1,3})%",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var fiveHour = Regex.Match(
+            response, @"Gemini Models\s+Five Hour Limit Remaining\s+(\d{1,3})%",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!weekly.Success || !fiveHour.Success) return false;
+        snapshot = new GeminiQuotaSnapshot(
+            Math.Clamp(int.Parse(weekly.Groups[1].Value), 0, 100),
+            Math.Clamp(int.Parse(fiveHour.Groups[1].Value), 0, 100),
+            checkedAt);
+        return true;
+    }
 }
 
 public static class TierClassifier

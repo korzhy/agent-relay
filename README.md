@@ -30,8 +30,8 @@ Agent Relay records when each Gemini High model is first observed in `agy models
 2. Launch Agent Relay once and choose the global delegation threshold:
    `OFF`, `LOW`, `MEDIUM`, or `HIGH`. It is saved immediately.
 3. Open **Аккаунты**, give the account a local label, and complete the visible
-   official `agy` OAuth. Only PRO and ULTRA accounts pass the fail-closed tier
-   check. Agent Relay never scans or imports Antigravity Tools accounts.
+   official `agy` OAuth. Agent Relay does not infer the subscription tier;
+   monitor account type manually. It never scans or imports Antigravity Tools accounts.
 4. The installer creates the idempotent managed block in
    `$HOME\.codex\AGENTS.md`, the global policy, and the
    `external-agent-delegation` skill. Foreign AGENTS content is preserved.
@@ -181,13 +181,14 @@ exactly 10% remains usable at the default threshold. Before publication Relay
 refreshes the active account and, when rotation is needed, candidates; selection
 uses highest remainder, least recently used, then stable account ID.
 
-Tier eligibility is obtained through a narrow `loadCodeAssist` adapter because
-official `/usage` does not expose the subscription tier. PRO and ULTRA are
-eligible; FREE, restricted, unknown, and endpoint failures are excluded
-fail-closed with a diagnostic. Access and refresh credentials are separate
-Windows Credential Manager entries. `%LOCALAPPDATA%\AgentRelay\accounts` contains
-only IDs, labels, email, eligibility, quota, timestamps, and settings. OAuth
-client credentials are not embedded or copied from Antigravity Tools.
+Agent Relay intentionally does not gate accounts on the undocumented
+`loadCodeAssist` tier response: official `/usage` proves that the credential can
+be used and supplies the rotation quota, while the subscription type is left to
+the user to monitor. A missing or changing tier response therefore does not
+block activation. Access and refresh credentials are separate Windows
+Credential Manager entries. `%LOCALAPPDATA%\AgentRelay\accounts` contains only
+IDs, labels, email, eligibility, quota, timestamps, and settings. OAuth client
+credentials are not embedded or copied from Antigravity Tools.
 
 Only one `agy` operation/runner may run globally across Relay projects. The
 global lease is acquired before account/model preflight and before handoff

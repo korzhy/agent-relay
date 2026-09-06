@@ -12,6 +12,9 @@ Managed `agy` access/refresh credentials are stored as separate Generic
 Credentials in the current user's Windows Credential Manager. Account JSON must
 never contain OAuth tokens. The official `agy` OAuth is the only enrollment
 path; Agent Relay does not read or import Antigravity Tools account storage.
+Subscription tier classification is deliberately manual; the Relay uses
+credential validity and `/usage` quota, not an undocumented tier endpoint, to
+avoid rejecting accounts that can demonstrably execute tasks.
 Report credential restoration failures, secret-bearing CLI JSON, dispatch with
 an unrecognized active credential, or concurrent cross-project runners as
 security issues.

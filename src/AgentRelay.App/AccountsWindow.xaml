@@ -12,8 +12,8 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel>
-            <TextBlock Text="Managed PRO / ULTRA аккаунты" FontSize="23" FontWeight="SemiBold"/>
-            <TextBlock Text="OAuth выполняет штатный agy. Antigravity Tools и его Free-аккаунты не читаются и не изменяются."
+            <TextBlock Text="Managed Gemini аккаунты" FontSize="23" FontWeight="SemiBold"/>
+            <TextBlock Text="OAuth выполняет штатный agy. Тип аккаунта контролируется вручную; Antigravity Tools не читается и не изменяется."
                        Foreground="#9EABBE" Margin="0,5,0,16"/>
         </StackPanel>
         <DataGrid x:Name="AccountsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True"

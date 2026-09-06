@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using AgentRelay.Core;
 
@@ -24,9 +22,6 @@ public interface IAgyAccountClient
 
 public sealed class AgyAccountClient : IAgyAccountClient
 {
-    private const string TierEndpoint =
-        "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist";
-    private readonly HttpClient _http;
     private readonly IClock _clock;
     private readonly ICredentialStore? _credentials;
 
@@ -35,7 +30,6 @@ public sealed class AgyAccountClient : IAgyAccountClient
         IClock? clock = null,
         ICredentialStore? credentials = null)
     {
-        _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         _clock = clock ?? new SystemClock();
         _credentials = credentials;
     }
@@ -55,10 +49,10 @@ public sealed class AgyAccountClient : IAgyAccountClient
         using var process = Process.Start(start)
                             ?? throw new InvalidOperationException("agy OAuth process did not start.");
         await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        if (process.ExitCode != 0)
+        if (_credentials?.Read(AccountManager.AgyCredentialTarget) is null)
         {
             throw new OperationCanceledException(
-                $"agy OAuth was cancelled or failed with exit code {process.ExitCode}.");
+                $"agy OAuth produced no credential (exit code {process.ExitCode}).");
         }
     }
 
@@ -95,45 +89,12 @@ public sealed class AgyAccountClient : IAgyAccountClient
                 "Credential payload contains no access token.");
         }
 
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, TierEndpoint);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            request.Headers.UserAgent.ParseAdd("AgentRelay/0.4.0");
-            request.Content = new StringContent(
-                "{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}", Encoding.UTF8, "application/json");
-            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                return new AgyAccountInspection(
-                    quota, email, null, AccountEligibility.IneligibleTierUnavailable,
-                    $"Tier check failed closed: HTTP {(int)response.StatusCode}.");
-            }
-
-            using var document = JsonDocument.Parse(body);
-            var root = document.RootElement;
-            var tier = ReadTier(root, "paidTier") ?? ReadTier(root, "currentTier");
-            if (tier is null)
-            {
-                return new AgyAccountInspection(
-                    quota, email, null, AccountEligibility.IneligibleTierUnavailable,
-                    "Tier check returned no paidTier/currentTier; account is excluded.");
-            }
-            var restricted = IsIneligible(root, tier.Value.Id);
-            var eligibility = TierClassifier.Classify(tier.Value.Id, tier.Value.Name, restricted);
-            return new AgyAccountInspection(
-                quota, email, tier.Value.Name ?? tier.Value.Id, eligibility,
-                eligibility == AccountEligibility.Eligible ? null : "Only PRO and ULTRA accounts are eligible.");
-        }
-        catch (Exception exception) when (
-            exception is HttpRequestException or TaskCanceledException or JsonException)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return new AgyAccountInspection(
-                quota, email, null, AccountEligibility.IneligibleTierUnavailable,
-                $"Tier check failed closed: {exception.Message}");
-        }
+        return new AgyAccountInspection(
+            quota,
+            email,
+            null,
+            AccountEligibility.Eligible,
+            "Tier verification is disabled; monitor the Google account type manually.");
     }
 
     private static async Task<string> RunUsageAsync(string agyPath, CancellationToken cancellationToken)
@@ -207,22 +168,4 @@ public sealed class AgyAccountClient : IAgyAccountClient
         }
     }
 
-    private static (string? Id, string? Name)? ReadTier(JsonElement root, string propertyName)
-    {
-        if (!root.TryGetProperty(propertyName, out var tier) || tier.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-        return (FindString(tier, "id"), FindString(tier, "name"));
-    }
-
-    private static bool IsIneligible(JsonElement root, string? tierId)
-    {
-        if (!root.TryGetProperty("ineligibleTiers", out var values) ||
-            values.ValueKind != JsonValueKind.Array)
-        {
-            return false;
-        }
-        return values.GetArrayLength() > 0;
-    }
 }
