@@ -147,6 +147,39 @@ public sealed class CommandLinePreflightTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(workspace, AgentRelayConstants.TransportDirectory)));
     }
 
+    [Theory]
+    [InlineData("0")]
+    [InlineData("121")]
+    [InlineData("invalid")]
+    public async Task InvalidTimeoutFailsBeforeAccountPreflightAndTransport(string timeout)
+    {
+        var workspace = Path.Combine(_root, "timeout-repo");
+        Directory.CreateDirectory(workspace);
+        var paths = new AppPaths(Path.Combine(_root, "home"), Path.Combine(_root, "local"));
+        var services = RelayServices.Create(paths, Path.Combine(_root, "skill"), new NoOpClipboard());
+        await services.Policy.SetLevelAsync(paths.CodexPolicyFile, DelegationLevel.Medium);
+        var project = await services.Projects.AddAsync(workspace);
+        await services.Projects.TrustAsync(project.Id);
+        var task = Path.Combine(_root, "task.md");
+        await File.WriteAllTextAsync(task, "instructions");
+        await Assert.ThrowsAsync<ArgumentException>(() => CommandLine.RunAsync(services,
+            ["handoff", "publish", "--project", workspace, "--task", task, "--timeout-minutes", timeout]));
+        Assert.False(Directory.Exists(Path.Combine(workspace, ".agent-relay")));
+    }
+
+    [Fact]
+    public async Task RecallUnknownProjectIsReadOnlyAndDoesNotRegisterOrTrust()
+    {
+        var workspace = Path.Combine(_root, "unknown");
+        Directory.CreateDirectory(workspace);
+        var paths = new AppPaths(Path.Combine(_root, "home"), Path.Combine(_root, "local"));
+        var services = RelayServices.Create(paths, Path.Combine(_root, "skill"), new NoOpClipboard());
+        Assert.Equal(0, await CommandLine.RunAsync(services,
+            ["experience", "recall", "--project", workspace, "--kind", "implementation"]));
+        Assert.Empty(await services.Projects.ListAsync());
+        Assert.False(Directory.Exists(Path.Combine(workspace, ".agent-relay")));
+    }
+
     [Fact]
     public async Task Publish_WhenGlobalRunnerBusy_ReturnsElevenWithoutHandoff()
     {

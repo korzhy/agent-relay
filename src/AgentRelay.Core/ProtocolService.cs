@@ -4,13 +4,27 @@ namespace AgentRelay.Core;
 
 public sealed class ProtocolService
 {
+    private const string ExecutionContract = """
+        Relay execution discipline:
+        Implement the controller's scoped contract. Distinguish observed facts from hypotheses.
+        If the diagnosis is unproven, gather a discriminating observation before changing behavior;
+        if the answer requires an architectural decision, return BLOCKED with the evidence.
+        Use targeted reads and checks. Repeat a failed action only after a relevant change or new evidence.
+        Stop after the same root cause fails twice. Do not weaken tests or expand scope to obtain PASS.
+        Stop when the requested checks pass; do not add unrelated polishing or repeat unchanged checks.
+        If interrupted or blocked, report confirmed facts, changed files, checks and the next unresolved step.
+        A report is a claim for independent Codex review, never final acceptance.
+        """;
+
     private static readonly string[] ProhibitedActions =
     [
         "Do not decide or accept architecture.",
         "Do not accept security or final readiness.",
         "Do not deploy, push, publish, or touch production.",
         "Do not access, request, expose, or rotate secrets.",
-        "Do not perform irreversible actions."
+        "Do not perform irreversible actions.",
+        "Do not broaden scope, change public contracts or add dependencies without returning to Codex.",
+        "Do not weaken tests, coverage thresholds or acceptance criteria to make a gate pass."
     ];
 
     private readonly AtomicFileStore _files;
@@ -90,7 +104,7 @@ public sealed class ProtocolService
             executor,
             now,
             request.Title,
-            request.Instructions,
+            request.Instructions + "\n\n" + ExecutionContract,
             request.DeterministicGates,
             ProhibitedActions,
             expectedReportRelative);
@@ -187,7 +201,7 @@ public sealed class ProtocolService
             reviewAttemptId,
             "awaiting-codex",
             handoff.Control.Executor,
-            "Codex / Sol (UI-selected effort)",
+            "Codex orchestrator (UI-selected model and effort)",
             _clock.UtcNow,
             new PayloadReference(Relative(handoff.WorkspaceRoot, immutableEnvelopePath), reportEnvelopeHash),
             new PayloadReference(reviewPromptRelative, promptHash));

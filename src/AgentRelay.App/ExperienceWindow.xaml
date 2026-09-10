@@ -1,0 +1,24 @@
+<Window x:Class="AgentRelay.App.ExperienceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Опыт делегирования — Agent Relay" Width="840" Height="640" MinWidth="650" MinHeight="450"
+        Icon="Assets/AgentRelay.ico" Background="{StaticResource SurfaceBrush}"
+        Foreground="#E8EDF5" WindowStartupLocation="CenterOwner">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="Опыт делегирования" FontSize="24" FontWeight="SemiBold"/>
+            <TextBlock Text="Итоги независимого ревью Codex · хранятся только на этом компьютере"
+                       Foreground="#AAB7CA" TextWrapping="Wrap" Margin="0,6,0,18"/>
+        </StackPanel>
+        <ComboBox x:Name="ProjectsBox" Grid.Row="1" DisplayMemberPath="Path" Margin="0,0,0,16"
+                  SelectionChanged="Project_Changed" Padding="8"/>
+        <TextBlock x:Name="SummaryText" Grid.Row="2" Text="Выберите проект." TextWrapping="Wrap" Margin="0,0,0,16"/>
+        <TextBox x:Name="DetailsText" Grid.Row="3" IsReadOnly="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" Background="#182334" Foreground="#C9D6E8"
+                 BorderThickness="0" Padding="16" FontSize="13"/>
+    </Grid>
+</Window>

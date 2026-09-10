@@ -13,10 +13,12 @@
     <AssemblyName>AgentRelay</AssemblyName>
     <RootNamespace>AgentRelay.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.4.1</Version>
+    <ApplicationIcon>Assets\AgentRelay.ico</ApplicationIcon>
+    <Version>0.5.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
+    <Resource Include="Assets\AgentRelay.ico" />
     <Content Include="Assets\external-agent-delegation\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

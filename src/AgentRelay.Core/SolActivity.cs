@@ -24,7 +24,7 @@ public sealed record SolActivity(
     string Source)
 {
     public const int CurrentSchemaVersion = 1;
-    public const string CodexSource = "Codex / Sol";
+    public const string CodexSource = "Codex orchestrator";
 
     public bool IsFresh(DateTimeOffset now)
         => now <= ExpiresAt;

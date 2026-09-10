@@ -22,12 +22,44 @@ public static class CommandLine
             "policy" => await PolicyAsync(services, args, cancellationToken),
             "project" => await ProjectAsync(services, args, cancellationToken),
             "activity" => await ActivityAsync(services, args, cancellationToken),
+            "experience" => await ExperienceAsync(services, args, cancellationToken),
             "handoff" => await HandoffAsync(services, args, cancellationToken),
             "codex" => await CodexAsync(services, args, cancellationToken),
             "update" => await UpdateAsync(services, args, cancellationToken),
             "--help" or "-h" or "help" => Help(),
             _ => throw new ArgumentException($"Unknown command: {args[0]}")
         };
+    }
+
+    private static async Task<int> ExperienceAsync(RelayServices services,
+        IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        Require(args, 2, "experience recall|record --project <id|path>");
+        var projectKey = Option(args, "--project") ?? throw new ArgumentException("--project is required.");
+        var project = await services.Projects.FindAsync(projectKey, cancellationToken);
+        var store = new ExperienceStore(services.Paths, services.Files);
+        if (args[1].Equals("recall", StringComparison.OrdinalIgnoreCase))
+        {
+            DelegationTaskKind? kind = null;
+            if (Option(args, "--kind") is { } kindText)
+                kind = Enum.TryParse<DelegationTaskKind>(kindText, true, out var parsed) && Enum.IsDefined(parsed)
+                    ? parsed : throw new ArgumentException("--kind must be mechanical, implementation or investigation.");
+            var summary = project is null
+                ? new ExperienceSummary(0, 0, 0, 0, 0, 0, 0, [])
+                : await store.RecallAsync(project.Id, kind, Option(args, "--model"), cancellationToken);
+            Console.WriteLine(JsonSerializer.Serialize(summary, JsonSupport.Options));
+            return 0;
+        }
+        if (!args[1].Equals("record", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Unknown experience action.");
+        if (project is null) throw new KeyNotFoundException("Project is not registered.");
+        var inputPath = Option(args, "--file") ?? throw new ArgumentException("--file <review.json> is required.");
+        if (new FileInfo(inputPath).Length > 65536) throw new InvalidDataException("Review input exceeds 64 KiB.");
+        var input = await services.Files.ReadJsonAsync<ExperienceInput>(inputPath, cancellationToken)
+            ?? throw new InvalidDataException("Review input is empty.");
+        var entry = await store.RecordAsync(project, input, cancellationToken);
+        Console.WriteLine(JsonSerializer.Serialize(entry, JsonSupport.Options));
+        return 0;
     }
 
     private static async Task<int> AccountAsync(
@@ -129,7 +161,7 @@ public static class CommandLine
                                 throw new ArgumentException("--phase <phase> is required.");
                 if (!Enum.TryParse<SolActivityPhase>(phaseText, true, out var phase))
                 {
-                    throw new ArgumentException($"Invalid Sol activity phase: {phaseText}");
+                    throw new ArgumentException($"Invalid Codex activity phase: {phaseText}");
                 }
                 var summary = Option(args, "--summary") ??
                               throw new ArgumentException("--summary <text> is required.");
@@ -376,6 +408,10 @@ public static class CommandLine
                 var title = Option(args, "--title") ?? Path.GetFileNameWithoutExtension(taskPath);
                 var instructions = await File.ReadAllTextAsync(taskPath, cancellationToken);
                 var gates = Options(args, "--gate");
+                var timeoutText = Option(args, "--timeout-minutes") ?? "30";
+                if (!int.TryParse(timeoutText, out var timeoutMinutes) || timeoutMinutes is < 1 or > 120)
+                    throw new ArgumentException("--timeout-minutes must be an integer from 1 to 120 (default 30 per attempt).");
+                var runnerOptions = RunnerOptions.Default with { HardTimeout = TimeSpan.FromMinutes(timeoutMinutes) };
                 var missionId = Option(args, "--mission");
                 using var runnerLease = GlobalAgyLease.TryAcquire();
                 if (runnerLease is null)
@@ -401,7 +437,7 @@ public static class CommandLine
                 await services.Activity.SetAsync(
                     project,
                     SolActivityPhase.Delegating,
-                    $"Sol передаёт Gemini executor ограниченную задачу: {title}.",
+                    $"Codex передаёт Gemini executor ограниченную задачу: {title}.",
                     missionId,
                     cancellationToken: cancellationToken);
                 RunnerResult result;
@@ -428,12 +464,12 @@ public static class CommandLine
                     await services.Activity.SetAsync(
                         project,
                         SolActivityPhase.Delegating,
-                        $"Sol передал Gemini executor ограниченную задачу: {title}.",
+                        $"Codex передал Gemini executor ограниченную задачу: {title}.",
                         handoff.Control.MissionId,
                         handoff.Control.HandoffId,
                         cancellationToken: cancellationToken);
                     Console.WriteLine(JsonSerializer.Serialize(handoff.Control, JsonSupport.Options));
-                    result = await services.CreateRunner().RunAsync(
+                    result = await services.CreateRunner(runnerOptions).RunAsync(
                         project, handoff, agyPath, cancellationToken, runnerLease);
                     if (result.State != RelayState.QuotaExhausted)
                     {
@@ -465,7 +501,7 @@ public static class CommandLine
                         ? SolActivityPhase.Reviewing
                         : SolActivityPhase.Blocked,
                     result.State == RelayState.ReportReady
-                        ? "Отчёт Gemini executor получен; Sol должен независимо проверить результат."
+                        ? "Отчёт Gemini executor получен; Codex должен независимо проверить результат."
                         : result.Detail,
                     handoff.Control.MissionId,
                     handoff.Control.HandoffId,
@@ -636,8 +672,10 @@ public static class CommandLine
               project add|remove|trust <path-or-id>
               project list
               activity get|clear --project <id|path>
+              experience recall --project <id|path> [--kind mechanical|implementation|investigation] [--model <exact-model>]
+              experience record --project <id|path> --file <review.json>  (controller-reviewed outcome; local only)
               activity set --project <id|path> --phase <phase> --summary <text> [--mission <id>] [--handoff <id>]
-              handoff publish --project <id|path> --task <file> [--title <text>] [--mission <id>] [--gate <command> ...]
+              handoff publish --project <id|path> --task <file> [--title <text>] [--mission <id>] [--gate <command> ...] [--timeout-minutes <1..120; default 30 per attempt>]
               handoff status --project <id|path>
               handoff cancel --project <id|path>  (cancel active handoff and pause future dispatch)
               handoff resume --project <id|path>  (enable future dispatch; never replay a handoff)

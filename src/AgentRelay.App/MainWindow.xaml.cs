@@ -43,7 +43,8 @@ public partial class MainWindow : Window
 
         _trayIcon = new Forms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = new System.Drawing.Icon(System.Windows.Application.GetResourceStream(
+                new Uri("pack://application:,,,/Assets/AgentRelay.ico")).Stream),
             Text = "Agent Relay",
             Visible = true
         };
@@ -127,6 +128,11 @@ public partial class MainWindow : Window
         _ = RefreshQuotaAsync();
     }
 
+    private void Experience_Click(object sender, RoutedEventArgs e)
+    {
+        new ExperienceWindow(_services) { Owner = this }.ShowDialog();
+    }
+
     private async void ContextAction_Click(object sender, RoutedEventArgs e)
     {
         if (_currentMission is null)
@@ -185,10 +191,10 @@ public partial class MainWindow : Window
     {
         ThresholdDescription.Text = level switch
         {
-            DelegationLevel.Off => "Gemini executor запрещён. Sol выполняет работу самостоятельно.",
+            DelegationLevel.Off => "Gemini executor запрещён. Codex выполняет работу самостоятельно.",
             DelegationLevel.Low => "Только очевидная механическая работа с крупной ожидаемой экономией.",
             DelegationLevel.Medium => "Сбалансированная передача ограниченных и локально проверяемых задач.",
-            DelegationLevel.High => "Максимум подходящей работы передаётся Gemini executor; финальная проверка остаётся у Sol.",
+            DelegationLevel.High => "Максимум подходящей работы передаётся Gemini executor; финальная проверка остаётся у Codex.",
             _ => string.Empty
         };
     }
@@ -352,7 +358,7 @@ public partial class MainWindow : Window
         catch (Exception exception) when (
             exception is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
         {
-            StatusText.Text = "Локальный статус Sol повреждён; подробности доступны в диагностике.";
+            StatusText.Text = "Локальный статус Codex повреждён; подробности доступны в диагностике.";
             return null;
         }
     }
@@ -374,7 +380,7 @@ public partial class MainWindow : Window
     private void RenderEmpty()
     {
         MissionTitleText.Text = "Нет активной делегации";
-        MissionMetaText.Text = "Sol использует Gemini executor только когда порог и задача это оправдывают.";
+        MissionMetaText.Text = "Codex использует Gemini executor только когда порог и задача это оправдывают.";
         SolStatusText.Text = ThresholdOff.IsChecked == true
             ? "Делегирование выключено"
             : "Статус не подтверждён";
@@ -413,13 +419,13 @@ public partial class MainWindow : Window
         else
         {
             SolStatusText.Text = mission.State.State == RelayState.ReportReady
-                ? "Ожидается проверка Sol"
+                ? "Ожидается проверка Codex"
                 : liveRunner
                     ? "Ожидает отчёт Gemini"
                     : "Статус не подтверждён";
             SolDetailText.Text = liveRunner
-                ? "Sol передал ограниченную задачу и ожидает структурированный отчёт."
-                : "Нет свежей явной операционной фазы Sol.";
+                ? "Codex передал ограниченную задачу и ожидает структурированный отчёт."
+                : "Нет свежей явной операционной фазы Codex.";
             SolAgeText.Text = string.Empty;
             SolDot.Fill = liveRunner ? ActiveBrush : IdleBrush;
         }
@@ -428,7 +434,7 @@ public partial class MainWindow : Window
         {
             RelayState.Running => ("Выполняет задачу", $"Сейчас выполняет: {mission.Title}", ActiveBrush),
             RelayState.Waiting => ("Ожидает изменения", "Runner ожидает подтверждённое файловое или process-output событие.", WarningBrush),
-            RelayState.ReportReady => ("Отчёт готов", "Валидный отчёт готов к независимой проверке Sol.", ActiveBrush),
+            RelayState.ReportReady => ("Отчёт готов", "Валидный отчёт готов к независимой проверке Codex.", ActiveBrush),
             RelayState.Stalled => ("Остановлен", "Runner остановился без валидного завершения. Подробности доступны в диагностике.", ErrorBrush),
             RelayState.QuotaExhausted => ("Квота исчерпана", "Исчерпание подтверждено фактическим выводом runner.", ErrorBrush),
             RelayState.Paused => ("Пауза", "Внешнее выполнение приостановлено.", WarningBrush),
@@ -463,7 +469,7 @@ public partial class MainWindow : Window
                 "Agent Relay: отчёт готов",
                 mission.Delivery?.Succeeded == true
                     ? "Точный review prompt автоматически скопирован."
-                    : "Отчёт готов; требуется проверка Sol.",
+                    : "Отчёт готов; требуется проверка Codex.",
                 Forms.ToolTipIcon.Info);
         }
     }

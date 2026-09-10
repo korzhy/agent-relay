@@ -57,7 +57,8 @@
                     <ControlTemplate TargetType="RadioButton">
                         <Border x:Name="Border" Background="{TemplateBinding Background}"
                                 BorderBrush="#46536A" BorderThickness="1" CornerRadius="9">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">

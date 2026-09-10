@@ -168,6 +168,23 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_HardTimeoutStopsAttemptBeforeLongStallLimit()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_hard_timeout");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Budget", "fake-mode:stall", ["gate1"]));
+        var runner = new AgyRunner(_protocol, _runtimeStore, options: new RunnerOptions(
+            TimeSpan.FromMinutes(1), TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(10)));
+        var result = await runner.RunAsync(registered, handoff, GetFakeAgyPath());
+        Assert.Equal(RelayState.Stalled, result.State);
+        Assert.Contains("hard timeout", result.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(result.ReviewPromptPath);
+    }
+
+    [Fact]
     public async Task RunAsync_QuotaExhaustion_ReturnsQuotaExhausted()
     {
         var projectPath = Path.Combine(_tempDir, "proj_quota");

@@ -155,6 +155,18 @@ public sealed class CodexIntegrationServiceTests : IDisposable
         Assert.Equal(foreignPolicy, await File.ReadAllTextAsync(_appPaths.CodexPolicyFile));
     }
 
+    [Theory]
+    [InlineData(DelegationLevel.Off)]
+    [InlineData(DelegationLevel.Low)]
+    [InlineData(DelegationLevel.High)]
+    public async Task RepairPreservesExistingUserThreshold(DelegationLevel level)
+    {
+        await new PolicyService(_files).SetLevelAsync(_appPaths.CodexPolicyFile, level);
+        await _service.InstallOrRepairAsync();
+        var policy = await new PolicyService(_files).GetAsync(_appPaths.CodexPolicyFile);
+        Assert.Equal(level, policy.Level);
+    }
+
     private static string GetSolutionRoot()
     {
         var dir = AppDomain.CurrentDomain.BaseDirectory;

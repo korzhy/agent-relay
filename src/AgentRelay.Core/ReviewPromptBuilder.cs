@@ -29,5 +29,10 @@ public static class ReviewPromptBuilder
             Stop at the first actionable machine failure. If evidence is unavailable, record
             UNVERIFIED or BLOCKED rather than accepting PASS. Never deploy, push, access production,
             handle secrets, or perform irreversible actions without separate user authorization.
+
+            After independent review, use Agent Relay experience record with a compact controller review
+            (see the external-agent-delegation skill's references/experience.md). Record rejected,
+            blocked and abandoned outcomes too. Never infer acceptance from the implementer claim.
+            Keep evidence local, omit secrets, and do not promote a single anecdote into a global rule.
             """;
 }

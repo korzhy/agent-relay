@@ -13,6 +13,10 @@ update automatically from this repository's GitHub Releases.
 
 ## Two settings that must not be confused
 
+The controller is whichever model is active in Codex with the required tools and permissions.
+Legacy `Sol` class/phase names remain for compatibility; Relay does not require a Sol model
+or impose model-specific reasoning settings. The external executor remains Antigravity Gemini High.
+
 | Setting | Values | Meaning |
 |---|---|---|
 | External delegation threshold / Порог внешнего делегирования | `off`, `low`, `medium`, `high` (default `medium`) | How readily Codex routes suitable implementation to an external agent. |
@@ -114,6 +118,53 @@ durable per-project pause, so later publish attempts are rejected before a new
 handoff is created. `handoff resume` (and Resume in the GUI) removes that pause
 and re-enables future dispatch; it never silently replays an interrupted or
 cancelled mission. After resume, publish the task again to create a new handoff.
+
+## Bounded execution and local experience (0.5)
+
+The bundled skill supplies a compact task contract: observable outcome, known facts versus
+hypotheses, chosen approach, invariants, allowed write scope, non-goals and exact acceptance
+checks. Uncertain diagnosis can be delegated as evidence-only investigation; architectural
+decisions remain with Codex. Published tasks also carry stop rules against repeated failures,
+scope expansion, weakening tests and repeated checks without new evidence.
+
+CLI handoffs now have a **30-minute hard timeout per runner attempt**, configurable with
+`--timeout-minutes 1..120` (previous CLI default: two hours). Quota rotation creates a new
+attempt and restarts that timeout; it is not a total mission/token budget. A timeout leaves
+partial work for inspection and is never success. Prompt-based scope/loop rules are guidance,
+not a filesystem sandbox or a tool-call counter.
+
+`--gate` commands are supplied to the executor. Relay validates report structure and hashes;
+Codex independently executes required acceptance checks, including the behavioral/integration
+case, before acceptance. A valid report is not semantic acceptance.
+
+```text
+AgentRelay.exe experience recall --project <id-or-path> --kind implementation
+AgentRelay.exe experience recall --project <id-or-path> --model <exact-gemini-model>
+AgentRelay.exe experience record --project <id-or-path> --file reviewed-outcome.json
+```
+
+After review, Codex records `accepted`, `corrected`, `rejected`, `blocked` or `abandoned`,
+with task kind, correction count, failure category, brief evidence and a conditional lesson.
+The store binds the exact executor and task SHA-256. Accepted/corrected entries require a
+matching report envelope and successful controller review commands; this is a controller
+attestation, not automatically verified semantic truth. Identical retries are idempotent;
+different reviews cannot overwrite a handoff's recorded outcome.
+
+The **Опыт** window shows project-specific outcomes. History lives only under
+`%LOCALAPPDATA%\AgentRelay\experience\<project-id>`; no telemetry, embeddings, extra model
+calls, background summaries or automatic policy changes. Recall samples at most 200 recent
+records from 90 days, filters task kind/exact model, and returns at most five short lessons.
+Counts describe the sample; different models/tasks and quota/environment failures should
+not be treated as a model benchmark. Full evidence/commands stay in local records and are
+not included in recall. Memory is advisory data, never instructions or authorization.
+
+The [experience schema and workflow](src/AgentRelay.App/Assets/external-agent-delegation/references/experience.md)
+describe recording limits. Do not store secrets or source dumps. History is retained on
+uninstall and never placed in Git automatically. No old reports are retroactively called successes.
+
+The app, tray and installer share a multi-size icon generated from `Assets/RelayMark.xaml`;
+run `powershell -STA -File scripts/build-icon.ps1` to regenerate it. Dashboard labels use
+Codex/Gemini roles and readable threshold names (Выкл./Точечно/Баланс/Активно).
 
 ## Automatic updates
 

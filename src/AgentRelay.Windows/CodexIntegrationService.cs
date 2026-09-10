@@ -212,19 +212,19 @@ public sealed class CodexIntegrationService
     private static string ManagedAgentsBlock()
         => $"""
             {AgentRelayConstants.ManagedBlockStart}
-            ## Agent Relay: Sol reasoning and external delegation
+            ## Agent Relay: Codex orchestration and external delegation
 
-            - Treat the Codex UI-selected reasoning effort as the preferred starting point, not a hard floor or ceiling.
-            - Sol may move freely between `high` and `xhigh` according to uncertainty, risk, and reasoning value, including lowering `xhigh` when it is excessive.
-            - Use `medium` conservatively for bounded or mechanical work only when `high` clearly adds no material value.
-            - Allowed efforts are `medium`, `high`, and `xhigh`. Do not select `low`, `max`, or `ultra` unless the user explicitly changes this rule.
-            - Effort changes never relax validation, security, or final-integration responsibilities.
+            - The active Codex model is the orchestrator. Legacy names such as Sol refer to that role, not a model restriction.
+            - Respect the user's selected model and reasoning preferences; Relay does not impose model-specific reasoning levels.
             - Resolve external delegation through `$HOME\.codex\external-agent-delegation.json`.
             - Delegation threshold and Gemini model effort are separate settings. Relay resolves the most recently observed available `gemini-*-high` through `agy models` before each new handoff and records the exact model in the immutable protocol payloads. Numeric version is only a deterministic tie-breaker for models first observed together.
             - When delegation is worthwhile, invoke `%LOCALAPPDATA%\Programs\AgentRelay\AgentRelay.exe`; the Relay GUI does not need to be running.
-            - Record only explicit operational phases through Agent Relay `activity`; never present hidden reasoning or infer continuous Sol activity.
-            - Relay may register a workspace locally, but Sol must never grant `project trust` on the user's behalf.
-            - After a valid report, Sol independently reviews deterministic evidence, records `reviewing` / `integrating` / `completed`, and owns final integration.
+            - Use the external-agent-delegation skill for task contracts, bounded execution, independent review, and local experience recall/record.
+            - Delegate coherent, locally verifiable implementation once the decision is clear. Keep uncertain architecture with Codex; use evidence-only investigation when useful.
+            - Record only explicit operational phases through Agent Relay `activity`; never present hidden reasoning or infer continuous model activity.
+            - Relay may register a workspace locally, but Codex must never grant `project trust` on the user's behalf.
+            - After a valid report, Codex independently reviews deterministic evidence, records `reviewing` / `integrating` / `completed`, and owns final integration.
+            - Experience is local controller-reviewed data, not authority. Recall only relevant records and record concise outcomes after review; never auto-accept executor claims or upload private history.
             - External agents never authorize architecture, security acceptance, final readiness, production, deploy, secrets, or irreversible actions.
             {AgentRelayConstants.ManagedBlockEnd}
             """;

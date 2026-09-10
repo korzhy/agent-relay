@@ -1,6 +1,6 @@
 #define MyAppName "Agent Relay"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.4.1"
+  #define MyAppVersion "0.5.0"
 #endif
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish"
@@ -26,6 +26,7 @@ OutputBaseFilename=AgentRelaySetup-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\src\AgentRelay.App\Assets\AgentRelay.ico
 UninstallDisplayIcon={app}\AgentRelay.exe
 VersionInfoVersion={#MyAppVersion}
 VersionInfoProductName={#MyAppName}
