@@ -59,6 +59,12 @@ Use `%LOCALAPPDATA%\Programs\AgentRelay\AgentRelay.exe`; the GUI need not be run
    This is a wall-clock bound, not a token budget. Do not repeatedly restart timed-out work.
 3. Exit `5` / `trustRequired`: let the user answer the one-time workspace prompt.
    Never invoke `project trust` for the user. Exit `6` / `delegationOff`: work directly.
+   Statuses `credentialUnavailable`, `credentialStoreUnavailable`, and
+   `localStateAccessDenied` mean the invoking process may be unable to see the signed-in
+   user's Credential Manager or Agent Relay application data. Re-run the same diagnostic or
+   handoff through the product's approved execution flow before changing accounts. Do not infer
+   credential loss, delete accounts, re-authorize OAuth, weaken filesystem ACLs, or disable the
+   sandbox from one restricted-context result.
 4. Crash, missing/invalid report, stalled, paused and quota exhausted are non-completion.
    Use runner events/status; do not spend model calls polling unchanged state.
    After quota recovery is exhausted, inspect partial work and continue directly in Codex

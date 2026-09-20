@@ -85,6 +85,7 @@ public sealed class RelayServices
         var delivery = new ReviewPromptDeliveryService(
             paths, files, clipboard, clock);
         var models = new AgyModelSelectionService(paths, files, clock);
+        var resolvedCurrentVersion = currentVersion ?? AppVersion.Current;
         var resolvedCredentialStore = credentialStore ?? new WindowsCredentialStore();
         var accounts = new AccountManager(
             paths,
@@ -102,7 +103,12 @@ public sealed class RelayServices
             activity,
             delivery,
             new RuntimeRecoveryService(runtime, clock),
-            new DoctorService(paths, clock, files),
+            new DoctorService(
+                paths,
+                clock,
+                files,
+                resolvedCurrentVersion,
+                Environment.ProcessPath),
             models,
             new CodexIntegrationService(
                 paths,
@@ -115,7 +121,7 @@ public sealed class RelayServices
                 paths,
                 files,
                 updateHttp ?? CreateUpdateHttpClient(),
-                currentVersion ?? AppVersion.Current,
+                resolvedCurrentVersion,
                 updateLauncher,
                 clock));
     }

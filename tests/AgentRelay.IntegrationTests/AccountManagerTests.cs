@@ -139,6 +139,37 @@ public sealed class AccountManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task Preflight_CredentialNotVisible_DoesNotClaimNoEligibleAccount()
+    {
+        _agy.NextCredential = Credential("restricted");
+        var account = await _manager.AddAsync("Restricted", "agy.exe", true);
+        _store.DeleteAccountParts(account.Id);
+
+        var result = await _manager.PreflightAsync("agy.exe", null);
+
+        Assert.Equal("credentialUnavailable", result.Status);
+        Assert.Null(result.Account);
+        Assert.Contains("restricted", result.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("approved execution", result.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("no eligible", result.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Preflight_CredentialStoreAccessDenied_IsDistinctFromMissingCredential()
+    {
+        _agy.NextCredential = Credential("denied");
+        await _manager.AddAsync("Denied", "agy.exe", true);
+        _store.ReadException = new System.ComponentModel.Win32Exception(5, "Access denied");
+
+        var result = await _manager.PreflightAsync("agy.exe", null);
+
+        Assert.Equal("credentialStoreUnavailable", result.Status);
+        Assert.Null(result.Account);
+        Assert.Contains("Win32 5", result.Detail, StringComparison.Ordinal);
+        Assert.Contains("approved execution", result.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task GlobalLease_SerializesEnrollment()
     {
         using var lease = GlobalAgyLease.TryAcquire();
@@ -174,10 +205,22 @@ public sealed class AccountManagerTests : IDisposable
     private sealed class FakeCredentialStore : ICredentialStore
     {
         private readonly Dictionary<string, byte[]> _values = new(StringComparer.Ordinal);
+        public Exception? ReadException { get; set; }
         public IReadOnlyCollection<string> Targets => _values.Keys;
-        public byte[]? Read(string target) => _values.TryGetValue(target, out var value) ? value.ToArray() : null;
+        public byte[]? Read(string target)
+        {
+            if (ReadException is not null) throw ReadException;
+            return _values.TryGetValue(target, out var value) ? value.ToArray() : null;
+        }
         public void Write(string target, byte[] credential) => _values[target] = credential.ToArray();
         public void Delete(string target) => _values.Remove(target);
+
+        public void DeleteAccountParts(string id)
+        {
+            Delete($"AgentRelay:AgyAccount:{id}:payload");
+            Delete($"AgentRelay:AgyAccount:{id}:access");
+            Delete($"AgentRelay:AgyAccount:{id}:refresh");
+        }
     }
 
     private sealed class FakeAgyClient(FakeCredentialStore store) : IAgyAccountClient

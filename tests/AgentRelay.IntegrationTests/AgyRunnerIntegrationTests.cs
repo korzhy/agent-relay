@@ -30,7 +30,14 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         _protocol = new ProtocolService(_files);
         _runtimeStore = new RuntimeStore(_appPaths, _files);
         _registry = new ProjectRegistry(_files, _appPaths.ProjectsFile);
-        _fastOptions = new RunnerOptions(TimeSpan.FromMinutes(15), TimeSpan.FromHours(2), TimeSpan.FromMilliseconds(10));
+        _fastOptions = new RunnerOptions(
+            TimeSpan.FromMinutes(15),
+            TimeSpan.FromHours(2),
+            TimeSpan.FromMilliseconds(10))
+        {
+            ReportPollInterval = TimeSpan.FromMilliseconds(10),
+            ReportStabilityTimeout = TimeSpan.FromMilliseconds(150)
+        };
     }
 
     public void Dispose()
@@ -118,6 +125,7 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         Assert.Equal(RelayState.Stalled, result.State);
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("report validation failed", result.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("status=missing", result.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

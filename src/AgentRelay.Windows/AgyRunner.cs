@@ -11,6 +11,9 @@ public sealed record RunnerOptions(
     TimeSpan HardTimeout,
     TimeSpan MonitorInterval)
 {
+    public TimeSpan ReportPollInterval { get; init; } = TimeSpan.FromMilliseconds(150);
+    public TimeSpan ReportStabilityTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
     public static RunnerOptions Default { get; } =
         new(TimeSpan.FromMinutes(15), TimeSpan.FromHours(2), TimeSpan.FromMilliseconds(250));
 }
@@ -341,12 +344,16 @@ public sealed class AgyRunner
 
         try
         {
-            var stableReportHash = await new StableFileGate().WaitAsync(
+            var stableReport = await new StableFileGate(
+                    _options.ReportPollInterval,
+                    _options.ReportStabilityTimeout)
+                .WaitAsync(
                 handoff.ExpectedReportPath, cancellationToken).ConfigureAwait(false);
-            if (stableReportHash is null)
+            if (!stableReport.IsStable)
             {
                 throw new InvalidDataException(
-                    "Runner exited without a stable report payload after debounce/hash validation.");
+                    $"Runner exited without a stable report payload after debounce/hash validation " +
+                    $"({stableReport.Diagnostic}).");
             }
             var reportEnvelope = await _protocol.AcceptReportAsync(handoff, cancellationToken)
                 .ConfigureAwait(false);

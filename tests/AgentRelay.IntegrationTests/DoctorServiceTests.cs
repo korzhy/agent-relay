@@ -26,9 +26,16 @@ public sealed class DoctorServiceTests : IDisposable
             File.Copy(source, Path.Combine(agyDirectory, Path.GetFileName(source)));
         }
 
-        var report = await new DoctorService(new AppPaths(home, local)).RunAsync();
+        var report = await new DoctorService(
+            new AppPaths(home, local),
+            applicationVersion: "0.5.1-test+abcdef",
+            applicationPath: "C:\\Program Files\\AgentRelay\\AgentRelay.exe",
+            executionIdentity: "TEST\\sandbox").RunAsync();
 
         Assert.False(report.Ready);
+        Assert.Equal("0.5.1-test+abcdef", report.ApplicationVersion);
+        Assert.Equal("C:\\Program Files\\AgentRelay\\AgentRelay.exe", report.ApplicationPath);
+        Assert.Equal("TEST\\sandbox", report.ExecutionIdentity);
         Assert.Equal(codexPath, report.CodexPath);
         Assert.Equal(Path.Combine(agyDirectory, "agy.exe"), report.AgyPath);
         Assert.True(report.Checks.Single(check => check.Name == "Codex App").Ready);

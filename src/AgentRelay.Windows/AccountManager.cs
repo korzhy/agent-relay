@@ -346,11 +346,47 @@ public sealed class AccountManager
             await SaveAccountAsync(registry, selected, selected.Id, cancellationToken).ConfigureAwait(false);
             return new AccountPreflightResult("ready", selected, "Managed account selected deterministically.");
         }
-        catch (Exception exception) when (
-            exception is IOException or InvalidDataException or InvalidOperationException or
-                System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+        catch (ManagedCredentialUnavailableException exception)
         {
-            return new AccountPreflightResult("noEligibleAccount", null, exception.Message);
+            return new AccountPreflightResult("credentialUnavailable", null, exception.Message);
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            return new AccountPreflightResult(
+                "credentialStoreUnavailable",
+                null,
+                $"Windows Credential Manager is unavailable in this execution context " +
+                $"(Win32 {exception.NativeErrorCode}). Re-run through approved execution before " +
+                "changing or re-enrolling an account.");
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return new AccountPreflightResult(
+                "localStateAccessDenied",
+                null,
+                $"Agent Relay local state is inaccessible in this execution context: {exception.Message}");
+        }
+        catch (IOException exception)
+        {
+            return new AccountPreflightResult(
+                "localStateUnavailable",
+                null,
+                $"Agent Relay local state I/O failed: {exception.Message}");
+        }
+        catch (JsonException exception)
+        {
+            return new AccountPreflightResult(
+                "credentialInvalid",
+                null,
+                $"Managed credential metadata is invalid: {exception.Message}");
+        }
+        catch (InvalidDataException exception)
+        {
+            return new AccountPreflightResult("preflightInvalidData", null, exception.Message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return new AccountPreflightResult("preflightFailed", null, exception.Message);
         }
         finally
         {
@@ -467,9 +503,13 @@ public sealed class AccountManager
     private byte[] ReadAccountCredential(string id)
     {
         var template = _credentials.Read(AccountTarget(id, "payload"))
-                       ?? throw new InvalidDataException($"Credential is missing for managed account {id}.");
+                       ?? throw ManagedCredentialUnavailable(id);
         var access = _credentials.Read(AccountTarget(id, "access"));
         var refresh = _credentials.Read(AccountTarget(id, "refresh"));
+        if (access is null || refresh is null)
+        {
+            throw ManagedCredentialUnavailable(id);
+        }
         var node = JsonNode.Parse(template)
                    ?? throw new InvalidDataException($"Credential template is invalid for account {id}.");
         ReplaceMarker(node, "__AGENT_RELAY_ACCESS__", access);
@@ -598,4 +638,13 @@ public sealed class AccountManager
 
     private static string? Fingerprint(byte[]? credential)
         => credential is null ? null : Convert.ToHexString(SHA256.HashData(credential));
+
+    private static ManagedCredentialUnavailableException ManagedCredentialUnavailable(string id)
+        => new(
+            $"Managed credential for account {id} is unavailable to the current Windows identity. " +
+            "This can mean the credential was removed or that Agent Relay is running in a restricted " +
+            "or different user context. Re-run through approved execution before changing or " +
+            "re-enrolling the account.");
+
+    private sealed class ManagedCredentialUnavailableException(string message) : Exception(message);
 }

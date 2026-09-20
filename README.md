@@ -241,6 +241,14 @@ Credential Manager entries. `%LOCALAPPDATA%\AgentRelay\accounts` contains only
 IDs, labels, email, eligibility, quota, timestamps, and settings. OAuth client
 credentials are not embedded or copied from Antigravity Tools.
 
+When a restricted process cannot see the signed-in user's Credential Manager or
+cannot write Agent Relay application data, preflight reports
+`credentialUnavailable`, `credentialStoreUnavailable`, or
+`localStateAccessDenied` instead of mislabelling the account as ineligible. Run
+`doctor --json` and retry through the product's approved execution flow before
+changing accounts. A restricted-context result alone is not evidence that a
+credential was deleted or revoked.
+
 Only one `agy` operation/runner may run globally across Relay projects. The
 global lease is acquired before account/model preflight and before handoff
 publication, so `runnerBusy` creates no protocol payload. A healthy runner is

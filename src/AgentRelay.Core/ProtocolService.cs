@@ -344,15 +344,18 @@ public sealed class ProtocolService
 
     public static void ValidateReport(ReportPayload report, ControlEnvelope control)
     {
-        if (report.ProtocolVersion != AgentRelayConstants.ProtocolVersion ||
-            !string.Equals(report.HandoffId, control.HandoffId, StringComparison.Ordinal) ||
-            !string.Equals(report.MissionId, control.MissionId, StringComparison.Ordinal) ||
-            report.Revision != control.Revision ||
-            !string.Equals(report.RunAttemptId, control.RunAttemptId, StringComparison.Ordinal) ||
-            report.CreatedAt.Offset != TimeSpan.Zero)
-        {
-            throw new InvalidDataException("Report identity does not match the active handoff.");
-        }
+        if (report.ProtocolVersion != AgentRelayConstants.ProtocolVersion)
+            throw new InvalidDataException("Report protocolVersion does not match the active protocol.");
+        if (!string.Equals(report.HandoffId, control.HandoffId, StringComparison.Ordinal))
+            throw new InvalidDataException("Report handoffId does not match the active handoff.");
+        if (!string.Equals(report.MissionId, control.MissionId, StringComparison.Ordinal))
+            throw new InvalidDataException("Report missionId does not match the active handoff.");
+        if (report.Revision != control.Revision)
+            throw new InvalidDataException("Report revision does not match the active handoff.");
+        if (!string.Equals(report.RunAttemptId, control.RunAttemptId, StringComparison.Ordinal))
+            throw new InvalidDataException("Report runAttemptId does not match the active handoff.");
+        if (report.CreatedAt.Offset != TimeSpan.Zero)
+            throw new InvalidDataException("Report createdAt must use the UTC offset.");
 
         ValidateExecutor(report.Executor);
         if (report.Executor != control.Executor)

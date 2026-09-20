@@ -8,6 +8,9 @@ public sealed record DoctorCheck(string Name, bool Ready, string Detail);
 public sealed record DoctorReport(
     bool Ready,
     DateTimeOffset CheckedAt,
+    string ApplicationVersion,
+    string ApplicationPath,
+    string ExecutionIdentity,
     string CodexPath,
     string AgyPath,
     IReadOnlyList<DoctorCheck> Checks);
@@ -17,15 +20,25 @@ public sealed class DoctorService
     private readonly AppPaths _paths;
     private readonly IClock _clock;
     private readonly AgyModelSelectionService _models;
+    private readonly string _applicationVersion;
+    private readonly string _applicationPath;
+    private readonly string _executionIdentity;
 
     public DoctorService(
         AppPaths paths,
         IClock? clock = null,
-        AtomicFileStore? files = null)
+        AtomicFileStore? files = null,
+        string? applicationVersion = null,
+        string? applicationPath = null,
+        string? executionIdentity = null)
     {
         _paths = paths;
         _clock = clock ?? new SystemClock();
         _models = new AgyModelSelectionService(paths, files ?? new AtomicFileStore(), _clock);
+        _applicationVersion = applicationVersion ?? "unknown";
+        _applicationPath = applicationPath ?? Environment.ProcessPath ?? string.Empty;
+        _executionIdentity = executionIdentity ??
+            $"{Environment.UserDomainName}\\{Environment.UserName}";
     }
 
     public async Task<DoctorReport> RunAsync(CancellationToken cancellationToken = default)
@@ -57,6 +70,9 @@ public sealed class DoctorService
         return new DoctorReport(
             checks.All(item => item.Ready),
             _clock.UtcNow,
+            _applicationVersion,
+            _applicationPath,
+            _executionIdentity,
             codexPath ?? string.Empty,
             agyPath,
             checks);

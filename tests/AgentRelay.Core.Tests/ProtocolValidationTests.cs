@@ -207,7 +207,23 @@ public sealed class ProtocolValidationTests : IDisposable
         var control = CreateValidControl();
         var report = CreateValidReport(control, ReportClaim.Pass) with { HandoffId = "mismatched" };
 
-        Assert.Throws<InvalidDataException>(() => ProtocolService.ValidateReport(report, control));
+        var error = Assert.Throws<InvalidDataException>(
+            () => ProtocolService.ValidateReport(report, control));
+        Assert.Contains("handoffId", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateReport_NonUtcTimestamp_IdentifiesTimestampField()
+    {
+        var control = CreateValidControl();
+        var report = CreateValidReport(control, ReportClaim.Pass) with
+        {
+            CreatedAt = new DateTimeOffset(2026, 9, 20, 10, 0, 0, TimeSpan.FromHours(3))
+        };
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => ProtocolService.ValidateReport(report, control));
+        Assert.Contains("createdAt", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

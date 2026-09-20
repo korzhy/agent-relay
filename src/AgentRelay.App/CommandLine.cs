@@ -484,9 +484,12 @@ public static class CommandLine
                         agyPath, attemptedAccounts, cancellationToken);
                     if (account.Status != "ready" || account.Account is null)
                     {
+                        var preflightSummary = account.Status == "noEligibleAccount"
+                            ? "no unused eligible managed account remains"
+                            : $"account preflight stopped with status {account.Status}";
                         result = result with
                         {
-                            Detail = "QuotaExhausted: no unused eligible managed account remains. " +
+                            Detail = $"QuotaExhausted: {preflightSummary}. " +
                                      account.Detail
                         };
                         break;
