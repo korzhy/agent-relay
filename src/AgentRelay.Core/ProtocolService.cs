@@ -58,11 +58,13 @@ public sealed class ProtocolService
         var currentControlPath = Path.Combine(transport, "control.json");
         var currentReportPath = Path.Combine(transport, "report.json");
         var currentCancelPath = Path.Combine(transport, "cancel.json");
+        var currentFailurePath = Path.Combine(transport, "failure.json");
         var previous = await _files.ReadJsonAsync<ControlEnvelope>(currentControlPath, cancellationToken)
             .ConfigureAwait(false);
 
         if (previous is not null && !await IsTerminalAsync(
-                previous, currentReportPath, currentCancelPath, cancellationToken).ConfigureAwait(false))
+                previous, currentReportPath, currentCancelPath, currentFailurePath, cancellationToken)
+                .ConfigureAwait(false))
         {
             throw new InvalidOperationException(
                 $"Project already has active handoff {previous.HandoffId} revision {previous.Revision}.");
@@ -136,6 +138,11 @@ public sealed class ProtocolService
         {
             File.Move(currentCancelPath, Path.Combine(
                 transport, $"previous-cancel-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}.json"));
+        }
+        if (File.Exists(currentFailurePath))
+        {
+            File.Move(currentFailurePath, Path.Combine(
+                transport, $"previous-failure-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.json"));
         }
 
         return new PublishedHandoff(
@@ -305,6 +312,44 @@ public sealed class ProtocolService
         return cancel;
     }
 
+    public async Task<FailureEnvelope> RecordFailureAsync(
+        string workspaceRoot,
+        FailureEnvelope failure,
+        CancellationToken cancellationToken = default)
+    {
+        var workspace = WorkspaceSafety.Validate(workspaceRoot);
+        var transport = Path.Combine(workspace, AgentRelayConstants.TransportDirectory);
+        var controlPath = Path.Combine(transport, "control.json");
+        var control = await _files.ReadJsonAsync<ControlEnvelope>(controlPath, cancellationToken)
+            .ConfigureAwait(false) ?? throw new InvalidOperationException("No handoff exists for failure recording.");
+        var controlHash = await AtomicFileStore.Sha256Async(controlPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (!MatchesFailure(control, controlHash, failure))
+        {
+            throw new InvalidOperationException(
+                "Failure identity does not match the current handoff and control hash.");
+        }
+
+        var immutablePath = Path.Combine(transport, "reports",
+            $"{failure.HandoffId}-r{failure.Revision}-{failure.RunAttemptId}.failure.json");
+        var recorded = await _files.ReadJsonAsync<FailureEnvelope>(immutablePath, cancellationToken)
+            .ConfigureAwait(false);
+        if (recorded is null)
+        {
+            await _files.WriteImmutableJsonAsync(immutablePath, failure, cancellationToken)
+                .ConfigureAwait(false);
+            recorded = failure;
+        }
+        else if (!MatchesFailure(control, controlHash, recorded))
+        {
+            throw new InvalidDataException("The immutable failure record has a different identity.");
+        }
+
+        await _files.WriteJsonAsync(Path.Combine(transport, "failure.json"), recorded, false,
+            cancellationToken).ConfigureAwait(false);
+        return recorded;
+    }
+
     public static void ValidateControl(ControlEnvelope control, string workspaceRoot)
     {
         if (control.ProtocolVersion != AgentRelayConstants.ProtocolVersion ||
@@ -367,6 +412,14 @@ public sealed class ProtocolService
         {
             throw new InvalidDataException("Report is missing required truth fields.");
         }
+        if (!Enum.IsDefined(report.Claim))
+        {
+            throw new InvalidDataException("Report claim is invalid.");
+        }
+        if (report.Commands.Any(command => command is null || string.IsNullOrWhiteSpace(command.Command)))
+        {
+            throw new InvalidDataException("Report commands contain an empty command.");
+        }
 
         var confirmations = report.ProhibitedActions;
         if (!confirmations.NoArchitectureAcceptance ||
@@ -381,9 +434,13 @@ public sealed class ProtocolService
         }
 
         if (report.Claim == ReportClaim.Pass &&
-            (report.Commands.Count == 0 || report.UnavailableDependencies.Count > 0))
+            (report.Commands.Count == 0 ||
+             report.Commands.Any(command => command.ExitCode != 0) ||
+             !string.IsNullOrWhiteSpace(report.FirstFailure) ||
+             report.UnavailableDependencies.Count > 0))
         {
-            throw new InvalidDataException("PASS requires executable commands and no unavailable dependencies.");
+            throw new InvalidDataException(
+                "PASS requires successful commands, no first failure, and no unavailable dependencies.");
         }
 
         if (report.Claim != ReportClaim.Pass && string.IsNullOrWhiteSpace(report.FirstFailure) &&
@@ -416,12 +473,26 @@ public sealed class ProtocolService
         ControlEnvelope control,
         string reportPointer,
         string cancelPointer,
+        string failurePointer,
         CancellationToken cancellationToken)
     {
         if (File.Exists(cancelPointer))
         {
             if (await HasMatchingCancellationAsync(
                     control, cancelPointer, cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+        }
+
+        if (File.Exists(failurePointer))
+        {
+            var failure = await _files.ReadJsonAsync<FailureEnvelope>(failurePointer, cancellationToken)
+                .ConfigureAwait(false);
+            var controlPath = Path.Combine(Path.GetDirectoryName(failurePointer)!, "control.json");
+            var controlHash = await AtomicFileStore.Sha256Async(controlPath, cancellationToken)
+                .ConfigureAwait(false);
+            if (failure is not null && MatchesFailure(control, controlHash, failure))
             {
                 return true;
             }
@@ -437,8 +508,25 @@ public sealed class ProtocolService
             stream, JsonSupport.Options, cancellationToken).ConfigureAwait(false);
         return report is not null &&
                string.Equals(report.HandoffId, control.HandoffId, StringComparison.Ordinal) &&
-               report.Revision == control.Revision;
+               string.Equals(report.MissionId, control.MissionId, StringComparison.Ordinal) &&
+               report.Revision == control.Revision &&
+               string.Equals(report.RunAttemptId, control.RunAttemptId, StringComparison.Ordinal) &&
+               string.Equals(report.State, "reported", StringComparison.Ordinal);
     }
+
+    private static bool MatchesFailure(
+        ControlEnvelope control,
+        string controlHash,
+        FailureEnvelope failure)
+        => failure.ProtocolVersion == AgentRelayConstants.ProtocolVersion &&
+           string.Equals(failure.HandoffId, control.HandoffId, StringComparison.Ordinal) &&
+           string.Equals(failure.MissionId, control.MissionId, StringComparison.Ordinal) &&
+           failure.Revision == control.Revision &&
+           string.Equals(failure.RunAttemptId, control.RunAttemptId, StringComparison.Ordinal) &&
+           string.Equals(failure.ControlSha256, controlHash, StringComparison.OrdinalIgnoreCase) &&
+           failure.CreatedAt.Offset == TimeSpan.Zero &&
+           failure.State is RelayState.Stalled or RelayState.QuotaExhausted &&
+           !string.IsNullOrWhiteSpace(failure.Stage);
 
     private async Task<bool> HasMatchingCancellationAsync(
         ControlEnvelope control,

@@ -403,6 +403,8 @@ public static class CommandLine
                     return 7;
                 }
 
+                await services.Recovery.RecoverAsync(project, cancellationToken);
+
                 var taskPath = Option(args, "--task")
                     ?? throw new ArgumentException("--task <file> is required.");
                 var title = Option(args, "--title") ?? Path.GetFileNameWithoutExtension(taskPath);
@@ -413,7 +415,24 @@ public static class CommandLine
                     throw new ArgumentException("--timeout-minutes must be an integer from 1 to 120 (default 30 per attempt).");
                 var runnerOptions = RunnerOptions.Default with { HardTimeout = TimeSpan.FromMinutes(timeoutMinutes) };
                 var missionId = Option(args, "--mission");
-                using var runnerLease = GlobalAgyLease.TryAcquire();
+                GlobalAgyLease? acquiredLease;
+                try
+                {
+                    acquiredLease = GlobalAgyLease.TryAcquire();
+                }
+                catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(
+                        new
+                        {
+                            status = exception is UnauthorizedAccessException
+                                ? "localStateAccessDenied" : "localStateUnavailable",
+                            detail = $"Cannot access the Agent Relay runner lock for this Windows identity: " +
+                                     exception.Message
+                        }, JsonSupport.Options));
+                    return 10;
+                }
+                using var runnerLease = acquiredLease;
                 if (runnerLease is null)
                 {
                     Console.WriteLine(JsonSerializer.Serialize(

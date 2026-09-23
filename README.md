@@ -205,13 +205,21 @@ strictly increasing revisions, and exact UTC timestamps. Published task,
 report, and review payloads are immutable.
 
 Lifecycle has two coordinated layers. Runtime `running`/`waiting` means a live
-runner; `stalled` and `quotaExhausted` are non-completions and the protocol
-handoff remains active, so a replacement publish is blocked until explicit
-cancel. `reportReady` is terminal because a validated report pointer exists.
+runner. A failed attempt records an immutable failure envelope and a matching
+`failure.json` pointer with its stage, exit code and stdout/stderr log paths.
+`stalled` and `quotaExhausted` remain non-completions, but their recorded
+attempts are terminal for dispatch: after inspecting partial work, a new
+publish creates a fresh handoff without cancel/resume. `reportReady` is
+terminal because a validated report pointer exists.
 Cancel writes the matching terminal `cancel.json` and arms the runtime pause;
 while paused, publish exits before creating transport. Resume removes the pause
 and resets runtime to identity-free `ready`, but never dispatches an old
 handoff. A new publish is always required after resume.
+
+For a failure, `handoff publish` returns a `failure` object and an immutable
+`failurePath`. `handoff status` retains that path in runtime state. Existing
+terminal `stalled` attempts from earlier releases are reconciled on status or
+the next publish only when their identity and control hash match.
 
 The dashboard maps `ready`, `running`, `waiting`, `stalled`,
 `quota exhausted`, `report ready`, and `paused` into a single mission view. It

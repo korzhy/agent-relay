@@ -66,6 +66,9 @@ Use `%LOCALAPPDATA%\Programs\AgentRelay\AgentRelay.exe`; the GUI need not be run
    credential loss, delete accounts, re-authorize OAuth, weaken filesystem ACLs, or disable the
    sandbox from one restricted-context result.
 4. Crash, missing/invalid report, stalled, paused and quota exhausted are non-completion.
+   Inspect `failure` / `failurePath` and the referenced local stdout/stderr logs when present.
+   A terminal stalled attempt permits a fresh publish after partial work is inspected;
+   it is never replayed automatically. An explicit pause still requires `handoff resume`.
    Use runner events/status; do not spend model calls polling unchanged state.
    After quota recovery is exhausted, inspect partial work and continue directly in Codex
    when feasible; otherwise record blocked and report the missing prerequisite.

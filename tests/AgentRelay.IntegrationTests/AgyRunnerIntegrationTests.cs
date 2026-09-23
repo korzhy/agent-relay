@@ -124,8 +124,20 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
 
         Assert.Equal(RelayState.Stalled, result.State);
         Assert.Equal(0, result.ExitCode);
-        Assert.Contains("report validation failed", result.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("status=missing", result.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("report-observation", result.Failure?.Stage);
+        Assert.Equal(0, result.Failure?.ExitCode);
+        Assert.Equal(handoff.Control.RunAttemptId, result.Failure?.RunAttemptId);
+        Assert.True(File.Exists(result.FailurePath));
+        Assert.Equal(result.FailurePath, (await _runtimeStore.ReadAsync(registered.Id))?.FailurePath);
+        Assert.True(File.Exists(result.Failure?.StdoutLogPath));
+        Assert.True(File.Exists(result.Failure?.StderrLogPath));
+
+        var replacement = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Retry", "fake-mode:pass", ["gate1"], handoff.Control.MissionId));
+        Assert.Equal(2, replacement.Control.Revision);
+        Assert.Equal(handoff.Control.HandoffId, replacement.Control.ParentHandoffId);
+        Assert.True(File.Exists(result.FailurePath));
     }
 
     [Fact]
@@ -147,6 +159,8 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
 
         Assert.Equal(RelayState.Stalled, result.State);
         Assert.Equal(1, result.ExitCode);
+        Assert.Equal("process-exit", result.Failure?.Stage);
+        Assert.Equal(1, result.Failure?.ExitCode);
     }
 
     [Fact]
@@ -212,6 +226,23 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         Assert.Equal(RelayState.QuotaExhausted, result.State);
         Assert.Equal(1, result.ExitCode);
         Assert.Contains("Quota exhaustion confirmed", result.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunAsync_QuotaTextAcrossOutputChunks_IsDetected()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_quota_chunks");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Chunked quota", "fake-mode:quota_chunk_boundary", ["gate1"]));
+        var runner = new AgyRunner(_protocol, _runtimeStore, options: _fastOptions);
+
+        var result = await runner.RunAsync(registered, handoff, GetFakeAgyPath());
+
+        Assert.Equal(RelayState.QuotaExhausted, result.State);
+        Assert.Equal("quota", result.Failure?.Stage);
     }
 
     [Fact]
@@ -312,6 +343,25 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_ExecutableDisappearsAfterPublication_RecordsTerminalFailure()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_executable_missing");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Missing executable", "Instructions", ["gate1"]));
+
+        var result = await new AgyRunner(_protocol, _runtimeStore, options: _fastOptions)
+            .RunAsync(registered, handoff, Path.Combine(_tempDir, "missing-agy.exe"));
+
+        Assert.Equal(RelayState.Stalled, result.State);
+        Assert.Equal("process-start", result.Failure?.Stage);
+        Assert.NotNull(await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Replacement", "Instructions", ["gate1"])));
+    }
+
+    [Fact]
     public async Task RuntimeRecovery_RecoversInterruptedStateToStalled()
     {
         var projectPath = Path.Combine(_tempDir, "proj_recovery");
@@ -332,6 +382,95 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         Assert.Equal(RelayState.Stalled, recovered.State);
         Assert.Null(recovered.ProcessId);
         Assert.Contains("Recovered an interrupted runner", recovered.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RuntimeRecovery_RecordsDeadRunnerAndAllowsReplacement()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_recovery_replacement");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Interrupted", "Instructions", ["gate1"]));
+        await _runtimeStore.WriteAsync(new ProjectRuntimeState(
+            1, registered.Id, RelayState.Running,
+            handoff.Control.HandoffId, handoff.Control.MissionId,
+            handoff.Control.Revision, handoff.Control.RunAttemptId,
+            999999, DateTimeOffset.UtcNow, "Running...", handoff.ControlHash, null,
+            GetFakeAgyPath()));
+
+        var recovery = new RuntimeRecoveryService(_runtimeStore, protocol: _protocol);
+        using (var activeRunnerLease = GlobalAgyLease.TryAcquire())
+        {
+            Assert.NotNull(activeRunnerLease);
+            Assert.Equal(RelayState.Running, (await recovery.RecoverAsync(registered)).State);
+        }
+        var recovered = await recovery.RecoverAsync(registered);
+        var failurePath = Path.Combine(projectPath, AgentRelayConstants.TransportDirectory, "failure.json");
+        var failure = await _files.ReadJsonAsync<FailureEnvelope>(failurePath);
+
+        Assert.Equal(RelayState.Stalled, recovered.State);
+        Assert.Equal("runtime-recovery", failure?.Stage);
+        Assert.Null(failure?.ExitCode);
+        Assert.True(File.Exists(recovered.FailurePath));
+        var replacement = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Replacement", "Instructions", ["gate1"]));
+        Assert.Equal(handoff.Control.HandoffId, replacement.Control.ParentHandoffId);
+    }
+
+    [Fact]
+    public async Task RuntimeRecovery_RepairsLegacyMissingReportState()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_legacy_stalled");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Old attempt", "Instructions", ["gate1"]));
+        await _runtimeStore.WriteAsync(new ProjectRuntimeState(
+            1, registered.Id, RelayState.Stalled,
+            handoff.Control.HandoffId, handoff.Control.MissionId,
+            handoff.Control.Revision, handoff.Control.RunAttemptId,
+            null, DateTimeOffset.UtcNow,
+            "Runner exited but report validation failed: Runner exited without a stable report payload " +
+            "after debounce/hash validation (status=missing, observations=0).",
+            handoff.ControlHash, null));
+
+        var recovered = await new RuntimeRecoveryService(_runtimeStore, protocol: _protocol)
+            .RecoverAsync(registered);
+
+        Assert.Equal(RelayState.Stalled, recovered.State);
+        Assert.True(File.Exists(recovered.FailurePath));
+        var failure = await _files.ReadJsonAsync<FailureEnvelope>(recovered.FailurePath!);
+        Assert.Equal("legacy-terminal-recovery", failure?.Stage);
+        Assert.NotNull(await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Replacement", "Instructions", ["gate1"])));
+    }
+
+    [Fact]
+    public async Task RuntimeRecovery_DoesNotReleaseUnknownStalledState()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_unknown_stalled");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Active attempt", "Instructions", ["gate1"]));
+        await _runtimeStore.WriteAsync(new ProjectRuntimeState(
+            1, registered.Id, RelayState.Stalled,
+            handoff.Control.HandoffId, handoff.Control.MissionId,
+            handoff.Control.Revision, handoff.Control.RunAttemptId,
+            null, DateTimeOffset.UtcNow,
+            "runnerBusy: another Agent Relay runner owns agy.",
+            handoff.ControlHash, null));
+
+        var recovered = await new RuntimeRecoveryService(_runtimeStore, protocol: _protocol)
+            .RecoverAsync(registered);
+
+        Assert.Null(recovered.FailurePath);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _protocol.PublishAsync(
+            projectPath, new MissionRequest("Must block", "Instructions", ["gate1"])));
     }
 
     private static string GetFakeAgyPath()

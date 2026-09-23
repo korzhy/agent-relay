@@ -6,6 +6,7 @@ Protocol v1 keeps transport under `.agent-relay/` only after a real delegation:
 - `tasks/`: immutable task payloads;
 - `reports/`: immutable report payloads and envelopes;
 - `report.json`: current validated report pointer;
+- `failure.json`: terminal failed-attempt pointer with stage, exit code and local log paths;
 - `reviews/`: exact immutable Codex review prompts;
 - `cancel.json`: durable cancellation pointer.
 
@@ -20,5 +21,6 @@ missions.
 
 Reports must say PASS, FAIL, BLOCKED, or UNVERIFIED and include changed files,
 commands with exit codes, first failure, unavailable dependencies, and explicit
-confirmation that prohibited actions did not occur. PASS requires executable
-proof and no unavailable required dependencies.
+confirmation that prohibited actions did not occur. PASS requires at least one
+successful command, no first failure and no unavailable required dependencies.
+Relay checks report consistency; Codex independently checks the required gates.

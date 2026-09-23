@@ -13,7 +13,8 @@ public sealed record ProjectRuntimeState(
     string? Detail,
     string? LastControlHash,
     string? ReviewPromptPath,
-    string? RunnerPath = null);
+    string? RunnerPath = null,
+    string? FailurePath = null);
 
 public static class RelayStateMachine
 {

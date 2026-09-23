@@ -485,7 +485,10 @@ public partial class MainWindow : Window
         }
         else if (mission.State.State is RelayState.Stalled or RelayState.QuotaExhausted)
         {
-            ContextText.Text = mission.State.Detail ?? "Внешний runner требует внимания.";
+            ContextText.Text = (mission.State.Detail ?? "Внешний runner требует внимания.") +
+                (mission.State.FailurePath is null
+                    ? string.Empty
+                    : $"\nЗапись сбоя: {mission.State.FailurePath}");
             ContextActionButton.Content = "Диагностика";
             ContextPanel.Visibility = Visibility.Visible;
         }

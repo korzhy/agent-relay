@@ -80,6 +80,7 @@ public sealed class RelayServices
     {
         var files = new AtomicFileStore();
         clock ??= new SystemClock();
+        var protocol = new ProtocolService(files, clock);
         var runtime = new RuntimeStore(paths, files);
         var activity = new SolActivityStore(paths, files, clock);
         var delivery = new ReviewPromptDeliveryService(
@@ -98,11 +99,11 @@ public sealed class RelayServices
             files,
             new ProjectRegistry(files, paths.ProjectsFile, clock),
             new PolicyService(files, clock),
-            new ProtocolService(files, clock),
+            protocol,
             runtime,
             activity,
             delivery,
-            new RuntimeRecoveryService(runtime, clock),
+            new RuntimeRecoveryService(runtime, clock, protocol),
             new DoctorService(
                 paths,
                 clock,

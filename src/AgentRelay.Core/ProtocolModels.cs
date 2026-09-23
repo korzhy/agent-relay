@@ -113,6 +113,21 @@ public sealed record CancelEnvelope(
     DateTimeOffset CreatedAt,
     string Reason);
 
+public sealed record FailureEnvelope(
+    int ProtocolVersion,
+    string HandoffId,
+    string MissionId,
+    int Revision,
+    string RunAttemptId,
+    string ControlSha256,
+    DateTimeOffset CreatedAt,
+    RelayState State,
+    string Stage,
+    int? ExitCode,
+    string Detail,
+    string? StdoutLogPath,
+    string? StderrLogPath);
+
 public sealed record MissionRequest(
     string Title,
     string Instructions,

@@ -86,6 +86,12 @@ public static class Program
             Console.Error.WriteLine($"quota exhausted: rate limit exceeded for {task.Executor.Model}");
             return 1;
         }
+        if (mode.Equals("quota_chunk_boundary", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.Write(new string('x', 4094));
+            Console.Error.Write("quota exhausted");
+            return 1;
+        }
         if (mode.Equals("quota_then_pass", StringComparison.OrdinalIgnoreCase) && task.Revision == 1)
         {
             Console.Error.WriteLine($"quota exhausted: rate limit exceeded for {task.Executor.Model}");

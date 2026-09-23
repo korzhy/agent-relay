@@ -14,7 +14,7 @@
     <RootNamespace>AgentRelay.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\AgentRelay.ico</ApplicationIcon>
-    <Version>0.5.1</Version>
+    <Version>0.5.2</Version>
   </PropertyGroup>
 
   <ItemGroup>

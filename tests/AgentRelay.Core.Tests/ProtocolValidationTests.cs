@@ -120,6 +120,65 @@ public sealed class ProtocolValidationTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishAsync_StaleFailurePointerDoesNotReleaseAnotherHandoff()
+    {
+        var files = new AtomicFileStore();
+        var service = new ProtocolService(files);
+        var first = await service.PublishAsync(
+            _tempDir, new MissionRequest("First", "Do work", []));
+        var failure = await service.RecordFailureAsync(_tempDir, new FailureEnvelope(
+            AgentRelayConstants.ProtocolVersion,
+            first.Control.HandoffId,
+            first.Control.MissionId,
+            first.Control.Revision,
+            first.Control.RunAttemptId,
+            first.ControlHash,
+            DateTimeOffset.UtcNow,
+            RelayState.Stalled,
+            "report-observation",
+            0,
+            "Missing report.",
+            null,
+            null));
+        var second = await service.PublishAsync(
+            _tempDir, new MissionRequest("Second", "Do more work", []));
+        var failurePath = Path.Combine(_tempDir, AgentRelayConstants.TransportDirectory, "failure.json");
+        await files.WriteJsonAsync(failurePath, failure);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PublishAsync(_tempDir, new MissionRequest("Must block", "Do not publish", [])));
+
+        Assert.Contains(second.Control.HandoffId, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RecordFailureAsync_RejectsWrongControlHash()
+    {
+        var service = new ProtocolService(new AtomicFileStore());
+        var handoff = await service.PublishAsync(
+            _tempDir, new MissionRequest("First", "Do work", []));
+        var wrong = new FailureEnvelope(
+            AgentRelayConstants.ProtocolVersion,
+            handoff.Control.HandoffId,
+            handoff.Control.MissionId,
+            handoff.Control.Revision,
+            handoff.Control.RunAttemptId,
+            new string('0', 64),
+            DateTimeOffset.UtcNow,
+            RelayState.Stalled,
+            "report-observation",
+            0,
+            "Missing report.",
+            null,
+            null);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RecordFailureAsync(_tempDir, wrong));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PublishAsync(_tempDir, new MissionRequest("Must block", "Do not publish", [])));
+    }
+
+    [Fact]
     public async Task ValidateForDispatchAsync_RejectsImmutableTaskTampering()
     {
         var files = new AtomicFileStore();
@@ -260,6 +319,31 @@ public sealed class ProtocolValidationTests : IDisposable
         };
 
         Assert.Throws<InvalidDataException>(() => ProtocolService.ValidateReport(report, control));
+    }
+
+    [Fact]
+    public void ValidateReport_PassClaimWithFailedCommand_Throws()
+    {
+        var control = CreateValidControl();
+        var report = CreateValidReport(control, ReportClaim.Pass) with
+        {
+            Commands = [new ExecutedCommand("dotnet test", 1)]
+        };
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => ProtocolService.ValidateReport(report, control));
+        Assert.Contains("successful commands", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateReport_UnknownClaim_Throws()
+    {
+        var control = CreateValidControl();
+        var report = CreateValidReport(control, (ReportClaim)42);
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => ProtocolService.ValidateReport(report, control));
+        Assert.Contains("claim", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
