@@ -14,7 +14,9 @@ public sealed record ProjectRuntimeState(
     string? LastControlHash,
     string? ReviewPromptPath,
     string? RunnerPath = null,
-    string? FailurePath = null);
+    string? FailurePath = null,
+    string? FailureStage = null,
+    DateTimeOffset? ProcessStartedAt = null);
 
 public static class RelayStateMachine
 {

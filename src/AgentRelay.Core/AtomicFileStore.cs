@@ -86,10 +86,22 @@ public sealed class AtomicFileStore
             return default;
         }
 
-        await using var stream = new FileStream(
-            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
-        return await JsonSerializer.DeserializeAsync<T>(stream, JsonSupport.Options, cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            await using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
+            return await JsonSerializer.DeserializeAsync<T>(stream, JsonSupport.Options, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (FileNotFoundException)
+        {
+            // A status reader can race an atomic pointer replacement or cleanup.
+            return default;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return default;
+        }
     }
 
     public static async Task<string> Sha256Async(string path, CancellationToken cancellationToken = default)

@@ -350,6 +350,126 @@ public sealed class ProtocolService
         return recorded;
     }
 
+    public async Task<ReportEnvelope?> ReadAcceptedReportAsync(
+        string workspaceRoot,
+        string handoffId,
+        int revision,
+        string runAttemptId,
+        string expectedControlHash,
+        CancellationToken cancellationToken = default)
+    {
+        var workspace = WorkspaceSafety.Validate(workspaceRoot);
+        var transport = Path.Combine(workspace, AgentRelayConstants.TransportDirectory);
+        var controlPath = Path.Combine(transport, "control.json");
+        var reportPointer = Path.Combine(transport, "report.json");
+        if (!File.Exists(controlPath) || !File.Exists(reportPointer)) return null;
+
+        var controlHash = await AtomicFileStore.Sha256Async(controlPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.Equals(controlHash, expectedControlHash, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var control = await _files.ReadJsonAsync<ControlEnvelope>(controlPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (control is null || !string.Equals(control.HandoffId, handoffId, StringComparison.Ordinal) ||
+            control.Revision != revision ||
+            !string.Equals(control.RunAttemptId, runAttemptId, StringComparison.Ordinal))
+            return null;
+        ValidateControl(control, workspace);
+        var taskPath = WorkspaceSafety.ResolveRelative(workspace, control.Task.Path);
+        var taskHash = await AtomicFileStore.Sha256Async(taskPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.Equals(taskHash, control.Task.Sha256, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var envelope = await _files.ReadJsonAsync<ReportEnvelope>(reportPointer, cancellationToken)
+            .ConfigureAwait(false);
+        if (envelope is null || envelope.ProtocolVersion != AgentRelayConstants.ProtocolVersion ||
+            !string.Equals(envelope.HandoffId, handoffId, StringComparison.Ordinal) ||
+            !string.Equals(envelope.MissionId, control.MissionId, StringComparison.Ordinal) ||
+            envelope.Revision != revision ||
+            !string.Equals(envelope.RunAttemptId, runAttemptId, StringComparison.Ordinal) ||
+            !string.Equals(envelope.State, "reported", StringComparison.Ordinal) ||
+            envelope.Executor != control.Executor ||
+            !string.Equals(envelope.Control.Sha256, controlHash, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(envelope.Task.Path, control.Task.Path, StringComparison.Ordinal) ||
+            !string.Equals(envelope.Task.Sha256, control.Task.Sha256, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var expectedReportPath = WorkspaceSafety.ResolveRelative(workspace, control.RequiredReportPath);
+        var reportPath = WorkspaceSafety.ResolveRelative(workspace, envelope.Report.Path);
+        if (!string.Equals(reportPath, expectedReportPath, StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(reportPath)) return null;
+        var reportHash = await AtomicFileStore.Sha256Async(reportPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.Equals(reportHash, envelope.Report.Sha256, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var payload = await _files.ReadJsonAsync<ReportPayload>(reportPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (payload is null) return null;
+        ValidateReport(payload, control);
+        var immutableEnvelopePath = Path.Combine(transport, "reports",
+            $"{handoffId}-r{revision}.envelope.json");
+        var immutableReviewPath = Path.Combine(transport, "reviews",
+            $"{handoffId}-r{revision}.envelope.json");
+        if (!File.Exists(immutableEnvelopePath) || !File.Exists(immutableReviewPath))
+            return null;
+        var immutableEnvelope = await _files.ReadJsonAsync<ReportEnvelope>(
+            immutableEnvelopePath, cancellationToken).ConfigureAwait(false);
+        var review = await _files.ReadJsonAsync<ReviewEnvelope>(
+            immutableReviewPath, cancellationToken).ConfigureAwait(false);
+        if (immutableEnvelope != envelope || review is null ||
+            !string.Equals(review.HandoffId, handoffId, StringComparison.Ordinal) ||
+            review.Revision != revision ||
+            review.ReviewAttemptId != envelope.ReviewAttemptId ||
+            !string.Equals(review.State, "awaiting-codex", StringComparison.Ordinal) ||
+            !string.Equals(review.ReportEnvelope.Path,
+                Relative(workspace, immutableEnvelopePath), StringComparison.Ordinal) ||
+            !string.Equals(review.Prompt.Path, envelope.ReviewPromptPath,
+                StringComparison.Ordinal)) return null;
+        var immutableHash = await AtomicFileStore.Sha256Async(
+            immutableEnvelopePath, cancellationToken).ConfigureAwait(false);
+        var promptPath = WorkspaceSafety.ResolveRelative(workspace, envelope.ReviewPromptPath);
+        if (!File.Exists(promptPath) ||
+            !string.Equals(immutableHash, review.ReportEnvelope.Sha256,
+                StringComparison.OrdinalIgnoreCase)) return null;
+        var promptHash = await AtomicFileStore.Sha256Async(promptPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.Equals(promptHash, review.Prompt.Sha256,
+                StringComparison.OrdinalIgnoreCase)) return null;
+        return envelope;
+    }
+
+    public async Task<FailureEnvelope?> ReadRecordedFailureAsync(
+        string workspaceRoot,
+        string handoffId,
+        int revision,
+        string runAttemptId,
+        string expectedControlHash,
+        CancellationToken cancellationToken = default)
+    {
+        var workspace = WorkspaceSafety.Validate(workspaceRoot);
+        var transport = Path.Combine(workspace, AgentRelayConstants.TransportDirectory);
+        var controlPath = Path.Combine(transport, "control.json");
+        var immutablePath = Path.Combine(transport, "reports",
+            $"{handoffId}-r{revision}-{runAttemptId}.failure.json");
+        if (!File.Exists(controlPath) || !File.Exists(immutablePath)) return null;
+        var controlHash = await AtomicFileStore.Sha256Async(controlPath, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.Equals(controlHash, expectedControlHash, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var control = await _files.ReadJsonAsync<ControlEnvelope>(controlPath, cancellationToken)
+            .ConfigureAwait(false);
+        var failure = await _files.ReadJsonAsync<FailureEnvelope>(immutablePath, cancellationToken)
+            .ConfigureAwait(false);
+        return control is not null && failure is not null &&
+               string.Equals(control.HandoffId, handoffId, StringComparison.Ordinal) &&
+               control.Revision == revision &&
+               string.Equals(control.RunAttemptId, runAttemptId, StringComparison.Ordinal) &&
+               MatchesFailure(control, controlHash, failure)
+            ? failure
+            : null;
+    }
+
     public static void ValidateControl(ControlEnvelope control, string workspaceRoot)
     {
         if (control.ProtocolVersion != AgentRelayConstants.ProtocolVersion ||

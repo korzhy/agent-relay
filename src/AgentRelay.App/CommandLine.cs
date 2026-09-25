@@ -480,13 +480,21 @@ public static class CommandLine
                         modelSelection.Executor,
                         cancellationToken);
                     missionId = handoff.Control.MissionId;
-                    await services.Activity.SetAsync(
-                        project,
-                        SolActivityPhase.Delegating,
-                        $"Codex передал Gemini executor ограниченную задачу: {title}.",
-                        handoff.Control.MissionId,
-                        handoff.Control.HandoffId,
-                        cancellationToken: cancellationToken);
+                    try
+                    {
+                        await services.Activity.SetAsync(
+                            project,
+                            SolActivityPhase.Delegating,
+                            $"Codex передал Gemini executor ограниченную задачу: {title}.",
+                            handoff.Control.MissionId,
+                            handoff.Control.HandoffId,
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                       JsonException)
+                    {
+                        // A presentation failure after publication must not strand this attempt.
+                    }
                     Console.WriteLine(JsonSerializer.Serialize(handoff.Control, JsonSupport.Options));
                     result = await services.CreateRunner(runnerOptions).RunAsync(
                         project, handoff, agyPath, cancellationToken, runnerLease);

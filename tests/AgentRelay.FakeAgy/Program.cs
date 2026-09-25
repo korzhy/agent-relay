@@ -97,6 +97,12 @@ public static class Program
             Console.Error.WriteLine($"quota exhausted: rate limit exceeded for {task.Executor.Model}");
             return 1;
         }
+        if (mode.Equals("network_error", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine("error: There was a network issue connecting to the server, please try again.");
+            Console.Error.WriteLine("AGY_ERROR: {\"status\":\"UNKNOWN\",\"retryable\":true}");
+            return 3;
+        }
         if (mode.Equals("stall", StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine("FakeAgy: entering infinite stall...");

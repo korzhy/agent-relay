@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using AgentRelay.Core;
@@ -207,6 +208,134 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_NetworkFailure_IsClassifiedAsTransport()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_network_error");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Network fault", "fake-mode:network_error", ["gate1"]));
+
+        var result = await new AgyRunner(_protocol, _runtimeStore, options: _fastOptions)
+            .RunAsync(registered, handoff, GetFakeAgyPath());
+
+        Assert.Equal(RelayState.Stalled, result.State);
+        Assert.Equal(3, result.ExitCode);
+        Assert.Equal("transport", result.Failure?.Stage);
+        Assert.Contains("transport failed", result.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(result.Failure?.StderrLogPath);
+        Assert.Contains("AGY_ERROR", await File.ReadAllTextAsync(result.Failure!.StderrLogPath!));
+    }
+
+    [Theory]
+    [InlineData("stdout")]
+    [InlineData("stderr")]
+    public async Task RunAsync_LockedLog_RecordsTerminalFailureAndStopsProcess(string stream)
+    {
+        var projectPath = Path.Combine(_tempDir, $"proj_locked_{stream}");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Log capture fault", "fake-mode:stall", ["gate1"]));
+        var logDirectory = _runtimeStore.ProjectLogDirectory(registered.Id);
+        Directory.CreateDirectory(logDirectory);
+        var lockedPath = Path.Combine(logDirectory, $"{handoff.Control.RunAttemptId}.{stream}.log");
+        await using var locked = new FileStream(
+            lockedPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+
+        var runner = new AgyRunner(_protocol, _runtimeStore, options: new RunnerOptions(
+            TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(10)));
+        var runTask = runner.RunAsync(registered, handoff, GetFakeAgyPath());
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
+        ProjectRuntimeState? running;
+        do
+        {
+            await Task.Delay(10);
+            running = await _runtimeStore.ReadAsync(registered.Id);
+        } while (running?.ProcessId is null && DateTimeOffset.UtcNow < deadline);
+
+        var processId = running?.ProcessId;
+        var result = await runTask.WaitAsync(TimeSpan.FromSeconds(7));
+
+        Assert.Equal(RelayState.Stalled, result.State);
+        Assert.True(result.Failure?.Stage == "log-capture", result.Detail);
+        Assert.True(File.Exists(result.FailurePath));
+        Assert.Equal(RelayState.Stalled, (await _runtimeStore.ReadAsync(registered.Id))?.State);
+        if (processId is not null)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId.Value);
+                Assert.True(process.HasExited);
+            }
+            catch (ArgumentException)
+            {
+                // The OS has already reaped the exact child process.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_LogDirectoryUnavailable_RecordsFailureBeforeStartingProcess()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_log_directory_unavailable");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Setup fault", "fake-mode:pass", ["gate1"]));
+        var logDirectory = _runtimeStore.ProjectLogDirectory(registered.Id);
+        Directory.CreateDirectory(Path.GetDirectoryName(logDirectory)!);
+        await File.WriteAllTextAsync(logDirectory, "A file blocks creation of the log directory.");
+
+        var result = await new AgyRunner(_protocol, _runtimeStore, options: _fastOptions)
+            .RunAsync(registered, handoff, GetFakeAgyPath());
+
+        Assert.Equal(RelayState.Stalled, result.State);
+        Assert.Equal("runner-setup", result.Failure?.Stage);
+        Assert.Null(result.ExitCode);
+        var local = await _runtimeStore.ReadAsync(registered.Id);
+        Assert.Equal(RelayState.Stalled, local?.State);
+        Assert.Null(local?.ProcessId);
+        Assert.Equal(handoff.Control.RunAttemptId, local?.RunAttemptId);
+    }
+
+    [Fact]
+    public async Task RunAsync_FailurePointerUnavailable_KeepsLocalTerminalStateAndRecovers()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_locked_failure_pointer");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Missing report", "fake-mode:missing_report", ["gate1"]));
+        var failurePointer = Path.Combine(projectPath, AgentRelayConstants.TransportDirectory,
+            "failure.json");
+        RunnerResult result;
+        await using (var locked = new FileStream(
+                         failurePointer, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+        {
+            result = await new AgyRunner(_protocol, _runtimeStore, options: _fastOptions)
+                .RunAsync(registered, handoff, GetFakeAgyPath());
+            Assert.Equal(RelayState.Stalled, result.State);
+            Assert.Null(result.FailurePath);
+            var local = await _runtimeStore.ReadAsync(registered.Id);
+            Assert.Equal(RelayState.Stalled, local?.State);
+            Assert.Equal("report-observation", local?.FailureStage);
+            Assert.Contains("Failure record unavailable", local?.Detail);
+        }
+
+        var recovered = await new RuntimeRecoveryService(_runtimeStore, protocol: _protocol)
+            .RecoverAsync(registered);
+        var failure = await _files.ReadJsonAsync<FailureEnvelope>(failurePointer);
+        Assert.Equal("report-observation", failure?.Stage);
+        Assert.Equal(handoff.Control.RunAttemptId, failure?.RunAttemptId);
+        Assert.True(File.Exists(recovered.FailurePath));
+    }
+
+    [Fact]
     public async Task RunAsync_QuotaExhaustion_ReturnsQuotaExhausted()
     {
         var projectPath = Path.Combine(_tempDir, "proj_quota");
@@ -362,6 +491,28 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_TamperedPublishedControl_RecordsLocalTerminalOutcome()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_tampered_dispatch");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Dispatch integrity", "fake-mode:pass", ["gate1"]));
+        await File.AppendAllTextAsync(handoff.ControlPath, "\n");
+
+        var result = await new AgyRunner(_protocol, _runtimeStore, options: _fastOptions)
+            .RunAsync(registered, handoff, GetFakeAgyPath());
+
+        Assert.Equal(RelayState.Stalled, result.State);
+        Assert.Null(result.FailurePath);
+        var local = await _runtimeStore.ReadAsync(registered.Id);
+        Assert.Equal("dispatch-validation", local?.FailureStage);
+        Assert.Null(local?.ProcessId);
+        Assert.Equal(handoff.Control.RunAttemptId, local?.RunAttemptId);
+    }
+
+    [Fact]
     public async Task RuntimeRecovery_RecoversInterruptedStateToStalled()
     {
         var projectPath = Path.Combine(_tempDir, "proj_recovery");
@@ -382,6 +533,27 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         Assert.Equal(RelayState.Stalled, recovered.State);
         Assert.Null(recovered.ProcessId);
         Assert.Contains("Recovered an interrupted runner", recovered.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RuntimeRecovery_DoesNotMistakeReusedPidForOriginalRunner()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_reused_pid");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        using var currentProcess = Process.GetCurrentProcess();
+        await _runtimeStore.WriteAsync(new ProjectRuntimeState(
+            1, registered.Id, RelayState.Running, "h1", "m1", 1, "r1",
+            currentProcess.Id, DateTimeOffset.UtcNow, "Old runner.", "hash", null,
+            currentProcess.MainModule!.FileName,
+            ProcessStartedAt: DateTimeOffset.UtcNow.AddDays(-1)));
+
+        var recovered = await new RuntimeRecoveryService(_runtimeStore).RecoverAsync(registered);
+
+        Assert.Equal(RelayState.Stalled, recovered.State);
+        Assert.Null(recovered.ProcessId);
+        Assert.False(currentProcess.HasExited);
     }
 
     [Fact]
@@ -417,6 +589,91 @@ public sealed class AgyRunnerIntegrationTests : IDisposable
         var replacement = await _protocol.PublishAsync(projectPath,
             new MissionRequest("Replacement", "Instructions", ["gate1"]));
         Assert.Equal(handoff.Control.HandoffId, replacement.Control.ParentHandoffId);
+    }
+
+    [Fact]
+    public async Task RuntimeRecovery_RecognizesAcceptedReportAfterRunnerCrash()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_accepted_report_recovery");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Accepted report", "fake-mode:pass", ["gate1"]));
+        var result = await new AgyRunner(_protocol, _runtimeStore, options: _fastOptions)
+            .RunAsync(registered, handoff, GetFakeAgyPath());
+        Assert.Equal(RelayState.ReportReady, result.State);
+        await _runtimeStore.WriteAsync(new ProjectRuntimeState(
+            1, registered.Id, RelayState.Running,
+            handoff.Control.HandoffId, handoff.Control.MissionId,
+            handoff.Control.Revision, handoff.Control.RunAttemptId,
+            999999, DateTimeOffset.UtcNow, "Interrupted before runtime completion.",
+            handoff.ControlHash, null, GetFakeAgyPath()));
+
+        var recovered = await new RuntimeRecoveryService(_runtimeStore, protocol: _protocol)
+            .RecoverAsync(registered);
+
+        Assert.Equal(RelayState.ReportReady, recovered.State);
+        Assert.Null(recovered.ProcessId);
+        Assert.Equal(result.ReviewPromptPath, recovered.ReviewPromptPath);
+        Assert.Null(recovered.FailurePath);
+        Assert.False(File.Exists(Path.Combine(projectPath,
+            AgentRelayConstants.TransportDirectory, "failure.json")));
+    }
+
+    [Fact]
+    public async Task RuntimeRecovery_RejectsTamperedAcceptedReport()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_tampered_report_recovery");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Tampered report", "fake-mode:pass", ["gate1"]));
+        var result = await new AgyRunner(_protocol, _runtimeStore, options: _fastOptions)
+            .RunAsync(registered, handoff, GetFakeAgyPath());
+        Assert.Equal(RelayState.ReportReady, result.State);
+        await File.AppendAllTextAsync(handoff.ExpectedReportPath, "\n");
+        await _runtimeStore.WriteAsync(new ProjectRuntimeState(
+            1, registered.Id, RelayState.Running,
+            handoff.Control.HandoffId, handoff.Control.MissionId,
+            handoff.Control.Revision, handoff.Control.RunAttemptId,
+            999999, DateTimeOffset.UtcNow, "Interrupted before runtime completion.",
+            handoff.ControlHash, null, GetFakeAgyPath()));
+
+        var recovered = await new RuntimeRecoveryService(_runtimeStore, protocol: _protocol)
+            .RecoverAsync(registered);
+
+        Assert.Equal(RelayState.Stalled, recovered.State);
+        Assert.Equal("runtime-recovery", recovered.FailureStage);
+        Assert.True(File.Exists(recovered.FailurePath));
+    }
+
+    [Fact]
+    public async Task RuntimeRecovery_PreservesRecordedFailureStageAfterRunnerCrash()
+    {
+        var projectPath = Path.Combine(_tempDir, "proj_recorded_failure_recovery");
+        Directory.CreateDirectory(projectPath);
+        var registered = await _registry.AddAsync(projectPath);
+        registered = await _registry.TrustAsync(registered.Id);
+        var handoff = await _protocol.PublishAsync(projectPath,
+            new MissionRequest("Missing report", "fake-mode:missing_report", ["gate1"]));
+        var result = await new AgyRunner(_protocol, _runtimeStore, options: _fastOptions)
+            .RunAsync(registered, handoff, GetFakeAgyPath());
+        Assert.Equal("report-observation", result.Failure?.Stage);
+        await _runtimeStore.WriteAsync(new ProjectRuntimeState(
+            1, registered.Id, RelayState.Running,
+            handoff.Control.HandoffId, handoff.Control.MissionId,
+            handoff.Control.Revision, handoff.Control.RunAttemptId,
+            999999, DateTimeOffset.UtcNow, "Interrupted before runtime completion.",
+            handoff.ControlHash, null, GetFakeAgyPath()));
+
+        var recovered = await new RuntimeRecoveryService(_runtimeStore, protocol: _protocol)
+            .RecoverAsync(registered);
+
+        Assert.Equal(RelayState.Stalled, recovered.State);
+        Assert.Equal("report-observation", recovered.FailureStage);
+        Assert.Equal(result.FailurePath, recovered.FailurePath);
     }
 
     [Fact]

@@ -40,14 +40,16 @@ public sealed class RuntimeRecoveryService
         }
 
         if (current.State is RelayState.Stalled or RelayState.QuotaExhausted &&
-            current.FailurePath is null && IsKnownTerminalDetail(current.Detail) &&
+            current.FailurePath is null &&
+            (current.FailureStage is not null || IsKnownTerminalDetail(current.Detail)) &&
             _protocol is not null)
         {
             using var lease = TryAcquireRecoveryLease();
             if (lease is not null)
             {
                 var (failurePath, failureError) = await TryRecordFailureAsync(
-                    project, current, current.State, "legacy-terminal-recovery",
+                    project, current, current.State,
+                    current.FailureStage ?? "legacy-terminal-recovery",
                     current.Detail!, cancellationToken).ConfigureAwait(false);
                 if (failurePath is not null)
                 {
@@ -67,12 +69,91 @@ public sealed class RuntimeRecoveryService
             }
         }
 
-        if (current.State is RelayState.Running or RelayState.Waiting && ProcessMatches(current) == false)
+        var processMatch = current.State is RelayState.Running or RelayState.Waiting
+            ? ProcessMatches(current)
+            : null;
+        if (current.State is RelayState.Running or RelayState.Waiting && processMatch is null)
+        {
+            return current with
+            {
+                Detail = "Runner process identity could not be verified; outcome is not yet terminal. " +
+                         "Retry status after OS process inspection becomes available."
+            };
+        }
+        if (current.State is RelayState.Running or RelayState.Waiting && processMatch == false)
         {
             using var lease = TryAcquireRecoveryLease();
             if (lease is null)
             {
                 return current;
+            }
+            if (_protocol is not null && current.HandoffId is not null &&
+                current.Revision is not null && current.RunAttemptId is not null &&
+                current.LastControlHash is not null)
+            {
+                ReportEnvelope? accepted = null;
+                try
+                {
+                    accepted = await _protocol.ReadAcceptedReportAsync(
+                        project.Path, current.HandoffId, current.Revision.Value,
+                        current.RunAttemptId, current.LastControlHash,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                   InvalidOperationException or JsonException or
+                                                   UnauthorizedAccessException)
+                {
+                    // An unreadable or invalid pointer is not evidence of an accepted report.
+                }
+                if (accepted is not null)
+                {
+                    current = current with
+                    {
+                        State = RelayState.ReportReady,
+                        ProcessId = null,
+                        UpdatedAt = _clock.UtcNow,
+                        Detail = "Recovered a validated report after interrupted runner completion.",
+                        ReviewPromptPath = WorkspaceSafety.ResolveRelative(
+                            project.Path, accepted.ReviewPromptPath),
+                        FailurePath = null,
+                        FailureStage = null
+                    };
+                    await _runtime.WriteAsync(current, cancellationToken).ConfigureAwait(false);
+                    return current;
+                }
+                FailureEnvelope? recordedFailure = null;
+                try
+                {
+                    recordedFailure = await _protocol.ReadRecordedFailureAsync(
+                        project.Path, current.HandoffId, current.Revision.Value,
+                        current.RunAttemptId, current.LastControlHash,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                   InvalidOperationException or JsonException or
+                                                   UnauthorizedAccessException)
+                {
+                    // A damaged immutable record is not a usable terminal outcome.
+                }
+                if (recordedFailure is not null)
+                {
+                    var (restoredPath, restorationError) = await TryRecordFailureAsync(
+                        project, current, recordedFailure.State, recordedFailure.Stage,
+                        recordedFailure.Detail, cancellationToken).ConfigureAwait(false);
+                    current = current with
+                    {
+                        State = recordedFailure.State,
+                        ProcessId = null,
+                        UpdatedAt = _clock.UtcNow,
+                        Detail = restoredPath is null
+                            ? $"{recordedFailure.Detail} Failure record unavailable: {restorationError}"
+                            : recordedFailure.Detail,
+                        FailurePath = restoredPath,
+                        FailureStage = recordedFailure.Stage
+                    };
+                    await _runtime.WriteAsync(current, cancellationToken).ConfigureAwait(false);
+                    return current;
+                }
             }
             var detail = "Recovered an interrupted runner without a valid report.";
             var (failurePath, failureError) = await TryRecordFailureAsync(
@@ -86,12 +167,20 @@ public sealed class RuntimeRecoveryService
                 ProcessId = null,
                 UpdatedAt = _clock.UtcNow,
                 Detail = detail,
-                FailurePath = failurePath
+                FailurePath = failurePath,
+                FailureStage = "runtime-recovery"
             };
             await _runtime.WriteAsync(current, cancellationToken).ConfigureAwait(false);
-            await _runtime.AppendLogAsync(
-                new ActionLogEntry(_clock.UtcNow, project.Id, "recovered", detail),
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _runtime.AppendLogAsync(
+                    new ActionLogEntry(_clock.UtcNow, project.Id, "recovered", detail),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // The recovered runtime state is already durable.
+            }
         }
         return current;
     }
@@ -176,7 +265,10 @@ public sealed class RuntimeRecoveryService
                    string.Equals(
                        process.MainModule?.FileName,
                        Path.GetFullPath(state.RunnerPath),
-                       StringComparison.OrdinalIgnoreCase);
+                       StringComparison.OrdinalIgnoreCase) &&
+                   (state.ProcessStartedAt is null ||
+                    Math.Abs((process.StartTime.ToUniversalTime() -
+                              state.ProcessStartedAt.Value.UtcDateTime).TotalSeconds) < 1);
         }
         catch (System.ComponentModel.Win32Exception)
         {

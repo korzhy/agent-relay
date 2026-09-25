@@ -40,6 +40,16 @@ public sealed class AgyRunner
         "insufficient quota",
         "quota has been exhausted"
     ];
+    private static readonly string[] TransportFailurePatterns =
+    [
+        "there was a network issue connecting to the server",
+        "agy_error:",
+        "streamgeneratecontent",
+        "connectex",
+        "connection refused",
+        "connection reset",
+        "connection failed"
+    ];
 
     private readonly ProtocolService _protocol;
     private readonly RuntimeStore _runtime;
@@ -93,7 +103,19 @@ public sealed class AgyRunner
                 cancellationToken)
                 .ConfigureAwait(false);
         }
-        await _protocol.ValidateForDispatchAsync(handoff, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _protocol.ValidateForDispatchAsync(handoff, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                           InvalidOperationException or JsonException or
+                                           UnauthorizedAccessException)
+        {
+            return await FinishAsync(
+                project, handoff, RelayState.Stalled, null,
+                $"Published handoff failed dispatch validation: {exception.Message}", null,
+                CancellationToken.None, failureStage: "dispatch-validation").ConfigureAwait(false);
+        }
         if (!File.Exists(agyExecutable))
         {
             return await FinishAsync(
@@ -113,10 +135,17 @@ public sealed class AgyRunner
         {
             return await Task.Factory.StartNew(
                     () => RunWithMutex(project, handoff, agyExecutable, cancellationToken),
-                    cancellationToken,
+                    CancellationToken.None,
                     TaskCreationOptions.LongRunning,
                     TaskScheduler.Default)
                 .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return await FinishAsync(
+                project, handoff, RelayState.Stalled, null,
+                $"Runner ownership or scheduling failed: {exception.Message}", null,
+                CancellationToken.None, failureStage: "runner-ownership").ConfigureAwait(false);
         }
         finally
         {
@@ -144,8 +173,11 @@ public sealed class AgyRunner
             }
             if (!ownsMutex)
             {
-                return new RunnerResult(RelayState.Stalled, null,
-                    "Another runner already owns this project; agy.exe was not started.", null);
+                return FinishAsync(
+                    project, handoff, RelayState.Stalled, null,
+                    "Another runner already owns this project; agy.exe was not started.", null,
+                    CancellationToken.None, failureStage: "runner-lock")
+                    .GetAwaiter().GetResult();
             }
 
             return ExecuteOwnedAsync(
@@ -167,7 +199,6 @@ public sealed class AgyRunner
         CancellationToken cancellationToken)
     {
         var logDirectory = _runtime.ProjectLogDirectory(project.Id);
-        Directory.CreateDirectory(logDirectory);
         var stdoutPath = Path.Combine(logDirectory, $"{handoff.Control.RunAttemptId}.stdout.log");
         var stderrPath = Path.Combine(logDirectory, $"{handoff.Control.RunAttemptId}.stderr.log");
         var prompt = BuildRunnerPrompt(handoff);
@@ -191,253 +222,344 @@ public sealed class AgyRunner
         start.ArgumentList.Add("2h");
 
         using var process = new Process { StartInfo = start, EnableRaisingEvents = true };
-        var lastActivityTimestamp = Stopwatch.GetTimestamp();
-        void RecordActivity() => Interlocked.Exchange(ref lastActivityTimestamp, Stopwatch.GetTimestamp());
-        using var watcher = new FileSystemWatcher(project.Path)
-        {
-            IncludeSubdirectories = true,
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
-        };
-        FileSystemEventHandler onActivity = (_, args) =>
-        {
-            if (!args.FullPath.Contains(
-                    $"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                RecordActivity();
-            }
-        };
-        RenamedEventHandler onRenamed = (_, _) => RecordActivity();
-        watcher.Changed += onActivity;
-        watcher.Created += onActivity;
-        watcher.Deleted += onActivity;
-        watcher.Renamed += onRenamed;
-        watcher.EnableRaisingEvents = true;
-
+        var processStarted = false;
+        var reportAccepted = false;
+        string? acceptedReviewPromptPath = null;
+        var phase = "runner-setup";
         try
         {
-            if (!process.Start())
+            var waiting = new ProjectRuntimeState(
+                1, project.Id, RelayState.Waiting,
+                handoff.Control.HandoffId, handoff.Control.MissionId,
+                handoff.Control.Revision, handoff.Control.RunAttemptId,
+                null, _clock.UtcNow, "Dispatch prepared; agy.exe has not started.",
+                handoff.ControlHash, null, Path.GetFullPath(agyExecutable));
+            await _runtime.WriteAsync(waiting, cancellationToken).ConfigureAwait(false);
+            Directory.CreateDirectory(logDirectory);
+            var lastActivityTimestamp = Stopwatch.GetTimestamp();
+            void RecordActivity() => Interlocked.Exchange(ref lastActivityTimestamp, Stopwatch.GetTimestamp());
+            using var watcher = new FileSystemWatcher(project.Path)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+            };
+            FileSystemEventHandler onActivity = (_, args) =>
+            {
+                if (!args.FullPath.Contains(
+                        $"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    RecordActivity();
+                }
+            };
+            RenamedEventHandler onRenamed = (_, _) => RecordActivity();
+            watcher.Changed += onActivity;
+            watcher.Created += onActivity;
+            watcher.Deleted += onActivity;
+            watcher.Renamed += onRenamed;
+            Exception? watcherError = null;
+            watcher.Error += (_, args) => Volatile.Write(ref watcherError, args.GetException());
+            watcher.EnableRaisingEvents = true;
+
+            phase = "process-start";
+            try
+            {
+                if (!process.Start())
+                {
+                    return await FinishAsync(
+                        project, handoff, RelayState.Stalled, null, "agy.exe failed to start.", null,
+                        cancellationToken, failureStage: "process-start").ConfigureAwait(false);
+                }
+                processStarted = true;
+            }
+            catch (Exception exception) when (
+                exception is System.ComponentModel.Win32Exception or InvalidOperationException)
             {
                 return await FinishAsync(
-                    project, handoff, RelayState.Stalled, null, "agy.exe failed to start.", null,
+                    project,
+                    handoff,
+                    RelayState.Stalled,
+                    null,
+                    $"agy.exe failed to start: {exception.Message}",
+                    null,
                     cancellationToken, failureStage: "process-start").ConfigureAwait(false);
             }
-        }
-        catch (Exception exception) when (
-            exception is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            return await FinishAsync(
-                project,
-                handoff,
-                RelayState.Stalled,
-                null,
-                $"agy.exe failed to start: {exception.Message}",
-                null,
-                cancellationToken, failureStage: "process-start").ConfigureAwait(false);
-        }
 
-        var running = new ProjectRuntimeState(
-            1,
-            project.Id,
-            RelayState.Running,
-            handoff.Control.HandoffId,
-            handoff.Control.MissionId,
-            handoff.Control.Revision,
-            handoff.Control.RunAttemptId,
-            process.Id,
-            _clock.UtcNow,
-            $"Running {executor.Provider} / {executor.Model}.",
-            handoff.ControlHash,
-            null,
-            Path.GetFullPath(agyExecutable));
-        await _runtime.WriteAsync(running, cancellationToken).ConfigureAwait(false);
-        await _runtime.AppendLogAsync(new ActionLogEntry(
-            _clock.UtcNow, project.Id, "dispatch",
-            $"handoff={handoff.Control.HandoffId} revision={handoff.Control.Revision} model={executor.Model}"),
-            cancellationToken).ConfigureAwait(false);
-        if (_activity is not null)
-        {
-            await _activity.SetAsync(
-                project,
-                SolActivityPhase.WaitingForFlash,
-                "Задача передана Gemini executor; Sol ожидает структурированный отчёт.",
-                handoff.Control.MissionId,
+            phase = "runtime-write";
+            var running = new ProjectRuntimeState(
+                1,
+                project.Id,
+                RelayState.Running,
                 handoff.Control.HandoffId,
-                "Agent Relay runner",
+                handoff.Control.MissionId,
+                handoff.Control.Revision,
+                handoff.Control.RunAttemptId,
+                process.Id,
+                _clock.UtcNow,
+                $"Running {executor.Provider} / {executor.Model}.",
+                handoff.ControlHash,
+                null,
+                Path.GetFullPath(agyExecutable),
+                ProcessStartedAt: process.StartTime.ToUniversalTime());
+            await _runtime.WriteAsync(running, cancellationToken).ConfigureAwait(false);
+            phase = "action-log";
+            await _runtime.AppendLogAsync(new ActionLogEntry(
+                _clock.UtcNow, project.Id, "dispatch",
+                $"handoff={handoff.Control.HandoffId} revision={handoff.Control.Revision} model={executor.Model}"),
                 cancellationToken).ConfigureAwait(false);
-        }
+            if (_activity is not null)
+            {
+                phase = "activity";
+                await _activity.SetAsync(
+                    project,
+                    SolActivityPhase.WaitingForFlash,
+                    "Задача передана Gemini executor; Sol ожидает структурированный отчёт.",
+                    handoff.Control.MissionId,
+                    handoff.Control.HandoffId,
+                    "Agent Relay runner",
+                    cancellationToken).ConfigureAwait(false);
+            }
 
+            phase = "log-capture";
         var quotaObserved = 0;
-        var stdoutOverlap = string.Empty;
-        var stderrOverlap = string.Empty;
-        void InspectOutput(string chunk, ref string overlap)
-        {
-            var sample = overlap + chunk;
+        var transportFailureObserved = 0;
+            var stdoutOverlap = string.Empty;
+            var stderrOverlap = string.Empty;
+            void InspectOutput(string chunk, ref string overlap)
+            {
+                var sample = overlap + chunk;
             if (QuotaPatterns.Any(pattern => sample.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
             {
                 Interlocked.Exchange(ref quotaObserved, 1);
             }
-            overlap = sample[^Math.Min(sample.Length, QuotaOverlapCharacters)..];
-        }
-        var stdoutTask = CaptureAsync(process.StandardOutput, stdoutPath, RecordActivity,
-            chunk => InspectOutput(chunk, ref stdoutOverlap));
-        var stderrTask = CaptureAsync(process.StandardError, stderrPath, RecordActivity,
-            chunk => InspectOutput(chunk, ref stderrOverlap));
-        var startedTimestamp = Stopwatch.GetTimestamp();
-        var exitTask = process.WaitForExitAsync(cancellationToken);
-        string? forcedReason = null;
-        RelayState? forcedState = null;
+            if (TransportFailurePatterns.Any(pattern =>
+                    sample.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
+            {
+                Interlocked.Exchange(ref transportFailureObserved, 1);
+            }
+                overlap = sample[^Math.Min(sample.Length, QuotaOverlapCharacters)..];
+            }
+            var stdoutTask = CaptureAsync(process.StandardOutput, stdoutPath, RecordActivity,
+                chunk => InspectOutput(chunk, ref stdoutOverlap));
+            var stderrTask = CaptureAsync(process.StandardError, stderrPath, RecordActivity,
+                chunk => InspectOutput(chunk, ref stderrOverlap));
+            var startedTimestamp = Stopwatch.GetTimestamp();
+            var exitTask = process.WaitForExitAsync(cancellationToken);
+            string? forcedReason = null;
+            RelayState? forcedState = null;
+            var forcedStage = "process-timeout";
 
-        while (!exitTask.IsCompleted)
-        {
-            await Task.Delay(_options.MonitorInterval, cancellationToken).ConfigureAwait(false);
-            if (_runtime.IsPaused(project.Id))
+            while (!exitTask.IsCompleted)
+            {
+                await Task.Delay(_options.MonitorInterval, cancellationToken).ConfigureAwait(false);
+                if (stdoutTask.IsFaulted || stderrTask.IsFaulted ||
+                    stdoutTask.IsCanceled || stderrTask.IsCanceled)
+                {
+                    forcedReason = "Runner log capture failed before process exit.";
+                    forcedState = RelayState.Stalled;
+                    forcedStage = "log-capture";
+                    KillTree(process);
+                    break;
+                }
+                if (Volatile.Read(ref watcherError) is { } observationError)
+                {
+                    forcedReason = $"Workspace activity watcher failed: {observationError.Message}";
+                    forcedState = RelayState.Stalled;
+                    forcedStage = "filesystem-watch";
+                    KillTree(process);
+                    break;
+                }
+                if (_runtime.IsPaused(project.Id))
+                {
+                    forcedReason = "Dispatch was paused; interrupted run has no completion claim.";
+                    forcedState = RelayState.Paused;
+                    KillTree(process);
+                    break;
+                }
+                if (Stopwatch.GetElapsedTime(startedTimestamp) > _options.HardTimeout)
+                {
+                    forcedReason = "Runner hard timeout elapsed without a valid report.";
+                    forcedState = RelayState.Stalled;
+                    KillTree(process);
+                    break;
+                }
+                if (Stopwatch.GetElapsedTime(Volatile.Read(ref lastActivityTimestamp)) > _options.StallTimeout)
+                {
+                    forcedReason = "Runner stalled with no filesystem or process-output activity.";
+                    forcedState = RelayState.Stalled;
+                    forcedStage = "process-stall";
+                    KillTree(process);
+                    break;
+                }
+            }
+
+            if (!await WaitForExitBoundedAsync(process).ConfigureAwait(false))
+            {
+                return await FinishAsync(
+                    project, handoff, RelayState.Stalled, null,
+                    "Runner process could not be confirmed stopped after termination request.",
+                    null, CancellationToken.None, failureStage: "process-termination",
+                    stdoutLogPath: File.Exists(stdoutPath) ? stdoutPath : null,
+                    stderrLogPath: File.Exists(stderrPath) ? stderrPath : null).ConfigureAwait(false);
+            }
+            phase = "log-capture";
+            await Task.WhenAll(stdoutTask, stderrTask)
+                .WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            var exitCode = process.HasExited ? process.ExitCode : (int?)null;
+
+            if (forcedState is null && _runtime.IsPaused(project.Id))
             {
                 forcedReason = "Dispatch was paused; interrupted run has no completion claim.";
                 forcedState = RelayState.Paused;
-                KillTree(process);
-                break;
             }
-            if (Stopwatch.GetElapsedTime(startedTimestamp) > _options.HardTimeout)
-            {
-                forcedReason = "Runner hard timeout elapsed without a valid report.";
-                forcedState = RelayState.Stalled;
-                KillTree(process);
-                break;
-            }
-            if (Stopwatch.GetElapsedTime(Volatile.Read(ref lastActivityTimestamp)) > _options.StallTimeout)
-            {
-                forcedReason = "Runner stalled with no filesystem or process-output activity.";
-                forcedState = RelayState.Stalled;
-                KillTree(process);
-                break;
-            }
-        }
 
-        try
-        {
-            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (InvalidOperationException)
-        {
-            // Process already exited during termination.
-        }
-        await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
-        var exitCode = process.HasExited ? process.ExitCode : (int?)null;
-
-        if (forcedState is null && _runtime.IsPaused(project.Id))
-        {
-            forcedReason = "Dispatch was paused; interrupted run has no completion claim.";
-            forcedState = RelayState.Paused;
-        }
-
-        if (forcedState is not null)
-        {
-            if (forcedState == RelayState.Paused)
+            if (forcedState is not null)
             {
-                return await FinishPausedAsync(
-                    project, handoff, exitCode, forcedReason!, cancellationToken).ConfigureAwait(false);
+                if (forcedState == RelayState.Paused)
+                {
+                    return await FinishPausedAsync(
+                        project, handoff, exitCode, forcedReason!, cancellationToken).ConfigureAwait(false);
+                }
+                return await FinishAsync(
+                    project, handoff, forcedState.Value, exitCode, forcedReason!, null, cancellationToken,
+                    failureStage: forcedStage, stdoutLogPath: stdoutPath, stderrLogPath: stderrPath)
+                    .ConfigureAwait(false);
             }
-            return await FinishAsync(
-                project, handoff, forcedState.Value, exitCode, forcedReason!, null, cancellationToken,
-                failureStage: "process-timeout", stdoutLogPath: stdoutPath, stderrLogPath: stderrPath)
-                .ConfigureAwait(false);
-        }
 
         if (exitCode != 0)
         {
             var quota = Volatile.Read(ref quotaObserved) != 0;
+            var transportFailure = Volatile.Read(ref transportFailureObserved) != 0;
             var state = quota ? RelayState.QuotaExhausted : RelayState.Stalled;
             var exitDetail = quota
                 ? "Quota exhaustion confirmed by actual runner output."
+                : transportFailure
+                    ? "External executor transport failed; no valid completion was accepted."
                 : $"agy.exe exited with code {exitCode}; no valid completion was accepted.";
             return await FinishAsync(
                 project, handoff, state, exitCode, exitDetail, null, cancellationToken,
-                failureStage: quota ? "quota" : "process-exit",
-                stdoutLogPath: stdoutPath, stderrLogPath: stderrPath).ConfigureAwait(false);
-        }
+                failureStage: quota ? "quota" : transportFailure ? "transport" : "process-exit",
+                    stdoutLogPath: stdoutPath, stderrLogPath: stderrPath).ConfigureAwait(false);
+            }
 
-        StableFileResult stableReport;
-        try
-        {
-            stableReport = await new StableFileGate(
-                    _options.ReportPollInterval,
-                    _options.ReportStabilityTimeout)
-                .WaitAsync(
-                handoff.ExpectedReportPath, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return await FinishAsync(
-                project, handoff, RelayState.Stalled, exitCode,
-                $"Report observation failed: {exception.Message}", null, cancellationToken,
-                failureStage: "report-observation", stdoutLogPath: stdoutPath,
-                stderrLogPath: stderrPath).ConfigureAwait(false);
-        }
-        if (!stableReport.IsStable)
-        {
-            return await FinishAsync(
-                project, handoff, RelayState.Stalled, exitCode,
-                "Runner exited without a stable report payload after debounce/hash validation " +
-                $"({stableReport.Diagnostic}).",
-                null, cancellationToken, failureStage: "report-observation",
-                stdoutLogPath: stdoutPath, stderrLogPath: stderrPath).ConfigureAwait(false);
-        }
-
-        ReportEnvelope reportEnvelope;
-        try
-        {
-            reportEnvelope = await _protocol.AcceptReportAsync(handoff, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (Exception exception) when (
-            exception is InvalidDataException or JsonException or IOException or
-                InvalidOperationException or UnauthorizedAccessException)
-        {
-            var validationFailure = exception is InvalidDataException or JsonException;
-            return await FinishAsync(
-                project, handoff, RelayState.Stalled, exitCode,
-                validationFailure
-                    ? $"Runner exited but report validation failed: {exception.Message}"
-                    : $"Runner exited but report acceptance failed: {exception.Message}",
-                null, cancellationToken,
-                failureStage: validationFailure ? "report-validation" : "report-persistence",
-                stdoutLogPath: stdoutPath, stderrLogPath: stderrPath).ConfigureAwait(false);
-        }
-
-        var reviewPromptPath = WorkspaceSafety.ResolveRelative(
-            project.Path, reportEnvelope.ReviewPromptPath);
-        var detail = "Validated report is ready for independent Codex review.";
-        if (_delivery is not null && reportEnvelope.ReviewAttemptId is not null)
-        {
+            StableFileResult stableReport;
             try
             {
-                var delivery = await _delivery.DeliverAsync(
-                    project, reportEnvelope.ReviewAttemptId, reviewPromptPath, cancellationToken)
+                stableReport = await new StableFileGate(
+                        _options.ReportPollInterval,
+                        _options.ReportStabilityTimeout)
+                    .WaitAsync(
+                    handoff.ExpectedReportPath, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return await FinishAsync(
+                    project, handoff, RelayState.Stalled, exitCode,
+                    $"Report observation failed: {exception.Message}", null, cancellationToken,
+                    failureStage: "report-observation", stdoutLogPath: stdoutPath,
+                    stderrLogPath: stderrPath).ConfigureAwait(false);
+            }
+            if (!stableReport.IsStable)
+            {
+                return await FinishAsync(
+                    project, handoff, RelayState.Stalled, exitCode,
+                    "Runner exited without a stable report payload after debounce/hash validation " +
+                    $"({stableReport.Diagnostic}).",
+                    null, cancellationToken, failureStage: "report-observation",
+                    stdoutLogPath: stdoutPath, stderrLogPath: stderrPath).ConfigureAwait(false);
+            }
+
+            phase = "report-persistence";
+            ReportEnvelope reportEnvelope;
+            try
+            {
+                reportEnvelope = await _protocol.AcceptReportAsync(handoff, cancellationToken)
                     .ConfigureAwait(false);
-                detail = delivery.Succeeded
-                    ? "Validated report is ready; the exact review prompt was copied to clipboard."
-                    : $"Validated report is ready; clipboard copy failed: {delivery.Error}";
-                await _runtime.AppendLogAsync(
-                    new ActionLogEntry(
-                        _clock.UtcNow,
-                        project.Id,
-                        delivery.Succeeded ? "prompt-copy" : "prompt-copy-failed",
-                        delivery.Succeeded
-                            ? $"reviewAttemptId={reportEnvelope.ReviewAttemptId}"
-                            : delivery.Error ?? "Clipboard copy failed."),
-                    cancellationToken).ConfigureAwait(false);
+                reportAccepted = true;
             }
             catch (Exception exception) when (
-                exception is IOException or JsonException or UnauthorizedAccessException or
-                    InvalidOperationException)
+                exception is InvalidDataException or JsonException or IOException or
+                    InvalidOperationException or UnauthorizedAccessException)
             {
-                detail = $"Validated report is ready; review prompt delivery failed: {exception.Message}";
+                var validationFailure = exception is InvalidDataException or JsonException;
+                return await FinishAsync(
+                    project, handoff, RelayState.Stalled, exitCode,
+                    validationFailure
+                        ? $"Runner exited but report validation failed: {exception.Message}"
+                        : $"Runner exited but report acceptance failed: {exception.Message}",
+                    null, cancellationToken,
+                    failureStage: validationFailure ? "report-validation" : "report-persistence",
+                    stdoutLogPath: stdoutPath, stderrLogPath: stderrPath).ConfigureAwait(false);
             }
+
+            var reviewPromptPath = WorkspaceSafety.ResolveRelative(
+                project.Path, reportEnvelope.ReviewPromptPath);
+            acceptedReviewPromptPath = reviewPromptPath;
+            var detail = "Validated report is ready for independent Codex review.";
+            if (_delivery is not null && reportEnvelope.ReviewAttemptId is not null)
+            {
+                try
+                {
+                    var delivery = await _delivery.DeliverAsync(
+                        project, reportEnvelope.ReviewAttemptId, reviewPromptPath, cancellationToken)
+                        .ConfigureAwait(false);
+                    detail = delivery.Succeeded
+                        ? "Validated report is ready; the exact review prompt was copied to clipboard."
+                        : $"Validated report is ready; clipboard copy failed: {delivery.Error}";
+                    await _runtime.AppendLogAsync(
+                        new ActionLogEntry(
+                            _clock.UtcNow,
+                            project.Id,
+                            delivery.Succeeded ? "prompt-copy" : "prompt-copy-failed",
+                            delivery.Succeeded
+                                ? $"reviewAttemptId={reportEnvelope.ReviewAttemptId}"
+                                : delivery.Error ?? "Clipboard copy failed."),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (
+                    exception is IOException or JsonException or UnauthorizedAccessException or
+                        InvalidOperationException)
+                {
+                    detail = $"Validated report is ready; review prompt delivery failed: {exception.Message}";
+                }
+            }
+            phase = "completion-persistence";
+            return await FinishAsync(
+                project, handoff, RelayState.ReportReady, exitCode,
+                detail, reviewPromptPath, cancellationToken).ConfigureAwait(false);
         }
-        return await FinishAsync(
-            project, handoff, RelayState.ReportReady, exitCode,
-            detail, reviewPromptPath, cancellationToken).ConfigureAwait(false);
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            KillTree(process);
+            if (processStarted)
+            {
+                if (!await WaitForExitBoundedAsync(process).ConfigureAwait(false))
+                {
+                    phase = "process-termination";
+                }
+            }
+            if (reportAccepted)
+            {
+                return new RunnerResult(RelayState.ReportReady,
+                    process.HasExited ? process.ExitCode : null,
+                    $"Validated report exists; local completion persistence failed: {exception.Message}",
+                    acceptedReviewPromptPath);
+            }
+            var state = _runtime.IsPaused(project.Id) ? RelayState.Paused : RelayState.Stalled;
+            if (state == RelayState.Paused)
+            {
+                return await FinishPausedAsync(project, handoff,
+                    processStarted && process.HasExited ? process.ExitCode : null,
+                    $"Runner interrupted during {phase}: {exception.Message}",
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            return await FinishAsync(project, handoff, RelayState.Stalled,
+                processStarted && process.HasExited ? process.ExitCode : null,
+                $"Runner failed during {phase}: {exception.Message}", null,
+                CancellationToken.None, failureStage: phase,
+                stdoutLogPath: File.Exists(stdoutPath) ? stdoutPath : null,
+                stderrLogPath: File.Exists(stderrPath) ? stderrPath : null).ConfigureAwait(false);
+        }
     }
 
     private async Task<RunnerResult> FinishPausedAsync(
@@ -447,10 +569,18 @@ public sealed class AgyRunner
         string detail,
         CancellationToken cancellationToken)
     {
-        await _protocol.CancelAsync(
-            handoff,
-            "Cancelled because the durable dispatch pause is armed.",
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _protocol.CancelAsync(
+                handoff,
+                "Cancelled because the durable dispatch pause is armed.",
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                           InvalidDataException or InvalidOperationException or JsonException)
+        {
+            detail += $" Cancellation record unavailable: {exception.Message}";
+        }
         return await FinishAsync(
             project,
             handoff,
@@ -475,29 +605,41 @@ public sealed class AgyRunner
     {
         FailureEnvelope? failure = null;
         string? failurePath = null;
+        string? failurePersistenceError = null;
         if (state is RelayState.Stalled or RelayState.QuotaExhausted)
         {
-            failure = await _protocol.RecordFailureAsync(
-                project.Path,
-                new FailureEnvelope(
-                    AgentRelayConstants.ProtocolVersion,
-                    handoff.Control.HandoffId,
-                    handoff.Control.MissionId,
-                    handoff.Control.Revision,
-                    handoff.Control.RunAttemptId,
-                    handoff.ControlHash,
-                    _clock.UtcNow,
-                    state,
-                    failureStage,
-                    exitCode,
-                    detail,
-                    stdoutLogPath,
-                    stderrLogPath),
-                cancellationToken).ConfigureAwait(false);
-            failurePath = Path.Combine(project.Path, AgentRelayConstants.TransportDirectory,
-                "reports", $"{handoff.Control.HandoffId}-r{handoff.Control.Revision}-" +
-                $"{handoff.Control.RunAttemptId}.failure.json");
+            try
+            {
+                failure = await _protocol.RecordFailureAsync(
+                    project.Path,
+                    new FailureEnvelope(
+                        AgentRelayConstants.ProtocolVersion,
+                        handoff.Control.HandoffId,
+                        handoff.Control.MissionId,
+                        handoff.Control.Revision,
+                        handoff.Control.RunAttemptId,
+                        handoff.ControlHash,
+                        _clock.UtcNow,
+                        state,
+                        failureStage,
+                        exitCode,
+                        detail,
+                        stdoutLogPath,
+                        stderrLogPath),
+                    CancellationToken.None).ConfigureAwait(false);
+                failurePath = Path.Combine(project.Path, AgentRelayConstants.TransportDirectory,
+                    "reports", $"{handoff.Control.HandoffId}-r{handoff.Control.Revision}-" +
+                    $"{handoff.Control.RunAttemptId}.failure.json");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                               InvalidDataException or InvalidOperationException or JsonException)
+            {
+                failurePersistenceError = exception.Message;
+            }
         }
+        var effectiveDetail = failurePersistenceError is null
+            ? detail
+            : $"{detail} Failure record unavailable: {failurePersistenceError}";
         var runtime = new ProjectRuntimeState(
             1,
             project.Id,
@@ -508,28 +650,43 @@ public sealed class AgyRunner
             handoff.Control.RunAttemptId,
             null,
             _clock.UtcNow,
-            detail,
+            effectiveDetail,
             handoff.ControlHash,
             reviewPromptPath,
             null,
-            failurePath);
-        await _runtime.WriteAsync(runtime, cancellationToken).ConfigureAwait(false);
-        await _runtime.AppendLogAsync(new ActionLogEntry(
-            _clock.UtcNow, project.Id, "complete", detail, exitCode), cancellationToken)
-            .ConfigureAwait(false);
+            failurePath,
+            state is RelayState.Stalled or RelayState.QuotaExhausted ? failureStage : null);
+        await _runtime.WriteAsync(runtime, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await _runtime.AppendLogAsync(new ActionLogEntry(
+                _clock.UtcNow, project.Id, "complete", effectiveDetail, exitCode),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // The terminal runtime record remains authoritative when the action log is unavailable.
+        }
         if (_activity is not null &&
             state is RelayState.Stalled or RelayState.QuotaExhausted or RelayState.Paused)
         {
-            await _activity.SetAsync(
-                project,
-                SolActivityPhase.Blocked,
-                detail,
-                handoff.Control.MissionId,
-                handoff.Control.HandoffId,
-                "Agent Relay runner",
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _activity.SetAsync(
+                    project,
+                    SolActivityPhase.Blocked,
+                    effectiveDetail,
+                    handoff.Control.MissionId,
+                    handoff.Control.HandoffId,
+                    "Agent Relay runner",
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+            {
+                // Activity presentation cannot undo a durable terminal outcome.
+            }
         }
-        return new RunnerResult(state, exitCode, detail, reviewPromptPath)
+        return new RunnerResult(state, exitCode, effectiveDetail, reviewPromptPath)
         {
             Failure = failure,
             FailurePath = failurePath
@@ -582,6 +739,32 @@ public sealed class AgyRunner
         catch (InvalidOperationException)
         {
             // Already exited.
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // The caller records a terminal process-termination failure if exit cannot be confirmed.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // The caller records a terminal process-termination failure if exit cannot be confirmed.
+        }
+    }
+
+    private static async Task<bool> WaitForExitBoundedAsync(Process process)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            return process.HasExited;
+        }
+        catch (InvalidOperationException)
+        {
+            return process.HasExited;
+        }
+        catch (OperationCanceledException)
+        {
+            return process.HasExited;
         }
     }
 
